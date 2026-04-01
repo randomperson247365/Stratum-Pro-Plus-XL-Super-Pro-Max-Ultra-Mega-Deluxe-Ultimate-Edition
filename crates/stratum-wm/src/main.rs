@@ -1,3 +1,4 @@
+mod decorations;
 mod keybinds;
 mod layout;
 mod output;

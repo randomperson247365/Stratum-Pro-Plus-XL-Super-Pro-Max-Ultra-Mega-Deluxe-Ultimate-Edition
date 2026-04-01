@@ -1,0 +1,146 @@
+# Stratum Pro Plus XL Super Pro Max Ultra Mega Deluxe Ultimate Edition
+
+A desktop environment built in Rust on the [River](https://codeberg.org/river/river) Wayland compositor. River handles all rendering; Stratum handles window management policy, decorations, the panel, launcher, and settings.
+
+## Phase Status
+
+- [x] Phase 1 — Foundation (workspace, River WM protocol, floating layout, keybinds)
+- [x] Phase 2 — Decorations (titlebars, borders, shadows)
+- [ ] Phase 3 — Shell & Panel (stratum-shell, widgets, system tray)
+- [ ] Phase 4 — App Launcher (XDG .desktop, fuzzy search, split view)
+- [ ] Phase 5 — Tiling Mode (master/stack, Super+T toggle)
+- [ ] Phase 6 — Settings App (Iced GUI, panel editor, keybind remapping)
+- [ ] Phase 7 — Polish & Ship (animations, AUR PKGBUILD, Nix flake)
+
+---
+
+## Dependencies
+
+| Package | Install (Arch/CachyOS) | Purpose |
+|---------|------------------------|---------|
+| `river` | `paru -S river` | Wayland compositor |
+| `foot` | `paru -S foot` | Default terminal |
+| `libxkbcommon` | `sudo pacman -S libxkbcommon` | Keyboard support |
+| `rust >= 1.77` | `rustup update` | Build toolchain |
+
+---
+
+## Build
+
+```bash
+cargo build --release
+```
+
+---
+
+## Install (Arch / CachyOS)
+
+Run these after building:
+
+```bash
+sudo install -Dm755 target/release/stratum-wm        /usr/local/bin/stratum-wm
+sudo install -Dm755 contrib/river-init               /usr/local/bin/stratum-river-init
+sudo install -Dm644 data/stratum.desktop             /usr/share/wayland-sessions/stratum.desktop
+sudo install -Dm644 data/default-config.toml         /etc/stratum/config.toml
+```
+
+Then **log out of KDE** and select **Stratum** from the SDDM session picker.
+
+SDDM reads session files from `/usr/share/wayland-sessions/` — Stratum will appear
+alongside "KDE Plasma (Wayland)" without any further configuration.
+
+---
+
+## How It Works
+
+```
+SDDM → launches River (via stratum.desktop)
+         └─ River runs contrib/river-init
+                 └─ river-init launches stratum-wm
+                         └─ stratum-wm connects to River via
+                            river-window-management-v1 protocol
+                            and handles all WM policy
+```
+
+River handles Wayland rendering. `stratum-wm` is the policy layer: it manages
+window positions, draws server-side decorations (titlebars, borders, shadows),
+dispatches keybindings, and communicates with the shell via IPC.
+
+---
+
+## Config
+
+| Location | Purpose |
+|----------|---------|
+| `~/.config/stratum/config.toml` | Per-user config (takes priority) |
+| `/etc/stratum/config.toml` | System-wide defaults |
+| Built-in defaults | Fallback if no file found |
+
+Config is **hot-reloaded on save** via inotify — no restart needed.
+
+### Default Keybindings
+
+| Key | Action |
+|-----|--------|
+| `Super+Return` | Open terminal (foot) |
+| `Super+Space` | Open launcher *(Phase 4)* |
+| `Super+Q` | Close focused window |
+| `Super+F` | Toggle fullscreen |
+| `Super+T` | Toggle tiling *(Phase 5)* |
+| `Super+Tab` | Focus next window |
+| `Super+Ctrl+F1..F5` | Switch VT |
+
+All bindings are configurable in `config.toml`:
+
+```toml
+[keybindings]
+"super+Return" = "spawn_terminal"
+"super+q"      = "close_focused"
+"super+f"      = "toggle_fullscreen"
+"super+Tab"    = "focus_next"
+```
+
+---
+
+## Decorations Config
+
+```toml
+[decorations]
+titlebar_height     = 28
+border_width_active = 2
+border_width_inactive = 1
+border_radius       = 8
+shadow_enabled      = true
+shadow_spread       = 12
+shadow_opacity      = 0.4
+buttons_position    = "right"
+buttons             = ["minimize", "maximize", "close"]
+```
+
+---
+
+## Crate Structure
+
+| Crate | Binary | Purpose |
+|-------|--------|---------|
+| `stratum-wm` | `stratum-wm` | Window manager (River protocol client) |
+| `stratum-config` | — | Config schema, TOML load/save, inotify watcher |
+| `stratum-ipc` | — | Unix socket IPC (JSON pub/sub) |
+| `stratum-shell` | `stratum-shell` | Panel + launcher *(Phase 3/4)* |
+| `stratum-settings` | `stratum-settings` | GUI settings app *(Phase 6)* |
+| `stratum-session` | `stratum-session` | Autostart runner *(Phase 1 stub)* |
+
+---
+
+## Contributing / Hacking
+
+```bash
+# Watch for compile errors while editing
+cargo watch -x check
+
+# Run just the WM (requires River already running)
+cargo run --bin stratum-wm
+
+# Check for warnings
+cargo clippy
+```
