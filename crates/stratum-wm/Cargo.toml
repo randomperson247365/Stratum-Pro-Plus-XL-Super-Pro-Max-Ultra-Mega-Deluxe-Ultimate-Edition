@@ -1,0 +1,21 @@
+[package]
+name = "stratum-wm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+stratum-config  = { path = "../stratum-config" }
+stratum-ipc     = { path = "../stratum-ipc" }
+
+wayland-client          = "0.31"
+wayland-protocols       = { version = "0.32", features = ["client", "staging", "unstable"] }
+wayland-protocols-wlr   = { version = "0.2", features = ["client"] }
+wayland-backend         = "0.3"
+wayland-scanner         = "0.31"
+xkbcommon               = "0.8"
+bitflags                = "2"
+thiserror               = { workspace = true }
+anyhow                  = { workspace = true }
+
+[build-dependencies]
+wayland-scanner = "0.31"

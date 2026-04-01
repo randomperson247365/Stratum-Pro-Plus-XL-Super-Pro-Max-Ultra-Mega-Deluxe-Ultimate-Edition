@@ -1,0 +1,29 @@
+#!/bin/sh
+# Stratum river-init — run by River on startup.
+#
+# This script configures River itself (compositor-level settings) and launches
+# stratum-wm, which registers as the River window manager and owns all
+# Super+key bindings.
+
+# ── Compositor settings ──────────────────────────────────────────────────────
+riverctl set-repeat-rate 25 200
+riverctl default-attach-mode bottom
+
+# ── VT switching (compositor-level, NOT owned by stratum-wm) ────────────────
+for vt in 1 2 3 4 5; do
+    riverctl map normal Super+Control F${vt} spawn "riverctl switch-vt ${vt}"
+done
+
+# ── DO NOT map Super+* bindings here ────────────────────────────────────────
+# All Super+key bindings are registered by stratum-wm via river-xkb-bindings-v1.
+# Duplicating them here would cause conflicts.
+
+# ── Launch stratum-wm ────────────────────────────────────────────────────────
+# stratum-wm connects to River, registers as the window manager, and handles:
+#   - floating layout (Phase 1)
+#   - server-side decorations (Phase 2)
+#   - keybinding dispatch from ~/.config/stratum/config.toml
+stratum-wm &
+
+# ── Launch stratum-shell when it's implemented (Phase 3) ────────────────────
+# stratum-shell &
