@@ -1,27 +1,30 @@
 use std::collections::HashMap;
 
 use wayland_client::{
-    protocol::{wl_compositor, wl_output, wl_registry, wl_seat},
+    protocol::{
+        wl_buffer, wl_compositor, wl_output, wl_registry, wl_seat, wl_shm, wl_shm_pool,
+        wl_surface,
+    },
     Connection, Dispatch, QueueHandle,
 };
 
 use stratum_config::StratumConfig;
 
 use crate::{
+    decorations::{self, TitlebarRenderer, WindowDecoration},
+    decorations::renderer::parse_hex_to_rgb,
     keybinds::{execute_action, parse_keybind, ActionContext},
     output::OutputState,
     protocol::{
-        // Event enums (from nested protocol modules)
         river_window_management_v1::{
-            river_node_v1, river_output_v1, river_seat_v1,
+            river_decoration_v1, river_node_v1, river_output_v1, river_seat_v1,
             river_window_manager_v1, river_window_v1,
         },
         river_xkb_bindings_v1::{river_xkb_binding_v1, river_xkb_bindings_v1},
         river_layer_shell_v1::river_layer_shell_v1,
         river_input_management_v1::river_input_manager_v1,
         river_libinput_config_v1::river_libinput_config_v1,
-        // Proxy re-exports
-        RiverInputManagerV1, RiverLayerShellV1, RiverLibinputConfigV1,
+        RiverDecorationV1, RiverInputManagerV1, RiverLayerShellV1, RiverLibinputConfigV1,
         RiverNodeV1, RiverOutputV1, RiverSeatV1, RiverWindowManagerV1,
         RiverWindowV1, RiverXkbBindingsV1, RiverXkbBindingV1,
     },
@@ -34,6 +37,7 @@ use crate::{
 #[derive(Default)]
 pub struct Globals {
     pub compositor:      Option<wl_compositor::WlCompositor>,
+    pub wl_shm:          Option<wl_shm::WlShm>,
     pub rwm:             Option<RiverWindowManagerV1>,
     pub xkb_bindings:    Option<RiverXkbBindingsV1>,
     pub layer_shell:     Option<RiverLayerShellV1>,
@@ -46,32 +50,40 @@ pub struct Globals {
 // ── AppState ─────────────────────────────────────────────────────────────────
 
 pub struct AppState {
-    pub globals:        Globals,
-    pub windows:        HashMap<u64, WindowState>,
-    pub outputs:        HashMap<u64, OutputState>,
-    pub seats:          HashMap<u64, SeatState>,
-    pub focused_window: Option<u64>,
-    pub focus_stack:    Vec<u64>,
+    pub globals:           Globals,
+    pub windows:           HashMap<u64, WindowState>,
+    pub outputs:           HashMap<u64, OutputState>,
+    pub seats:             HashMap<u64, SeatState>,
+    pub focused_window:    Option<u64>,
+    pub focus_stack:       Vec<u64>,
     /// Action deferred until the next manage_start.
-    pub pending_action: Option<String>,
-    pub layout_dirty:   bool,
-    pub config:         StratumConfig,
-    pub running:        bool,
+    pub pending_action:    Option<String>,
+    pub layout_dirty:      bool,
+    pub config:            StratumConfig,
+    pub running:           bool,
+    // Phase 2 — decorations
+    pub decorations:       HashMap<u64, WindowDecoration>,
+    /// Maps titlebar wl_surface protocol IDs back to their window.
+    pub surface_to_window: HashMap<u32, u64>,
+    pub font_renderer:     TitlebarRenderer,
 }
 
 impl AppState {
     pub fn new(config: StratumConfig) -> Self {
         Self {
-            globals:        Globals::default(),
-            windows:        HashMap::new(),
-            outputs:        HashMap::new(),
-            seats:          HashMap::new(),
-            focused_window: None,
-            focus_stack:    Vec::new(),
-            pending_action: None,
-            layout_dirty:   false,
+            globals:           Globals::default(),
+            windows:           HashMap::new(),
+            outputs:           HashMap::new(),
+            seats:             HashMap::new(),
+            focused_window:    None,
+            focus_stack:       Vec::new(),
+            pending_action:    None,
+            layout_dirty:      false,
             config,
-            running:        true,
+            running:           true,
+            decorations:       HashMap::new(),
+            surface_to_window: HashMap::new(),
+            font_renderer:     TitlebarRenderer::new(),
         }
     }
 
@@ -180,7 +192,7 @@ impl AppState {
         }
     }
 
-    fn apply_floating_layout_render(&self, qh: &QueueHandle<Self>) {
+    fn apply_floating_layout_render(&mut self, qh: &QueueHandle<Self>) {
         let (ow, oh) = self
             .outputs
             .values()
@@ -188,22 +200,60 @@ impl AppState {
             .map(|o| (o.width as i32, o.height as i32))
             .unwrap_or((1920, 1080));
 
-        for win in self.windows.values() {
-            if win.minimized {
+        // Snapshot per-window data to avoid holding a borrow on self.windows
+        // while also mutably borrowing self.decorations later in the loop.
+        let window_data: Vec<(u64, i32, i32, i32, i32, bool, bool, bool, String)> = self
+            .windows
+            .iter()
+            .map(|(id, win)| {
+                let is_active = self.focused_window == Some(*id);
+                let actual_w = if win.actual_width > 0 { win.actual_width } else { win.width };
+                let title = win.display_title().to_owned();
+                (*id, win.x, win.y, win.width, actual_w, win.minimized, win.fullscreen, is_active, title)
+            })
+            .collect();
+
+        use crate::protocol::river_window_management_v1::river_window_v1::Edges;
+
+        for (win_id, win_x, win_y, win_w, actual_w, minimized, fullscreen, is_active, title) in window_data {
+            if minimized {
                 continue;
             }
-            let node = win.proxy.get_node(qh, ());
-            let x = if win.x == 0 && win.y == 0 {
-                (ow - win.width).max(0) / 2
-            } else {
-                win.x
-            };
-            let y = if win.x == 0 && win.y == 0 {
-                (oh - win.height).max(0) / 2
-            } else {
-                win.y
-            };
-            node.set_position(x, y);
+
+            // Position the window node.
+            if let Some(win) = self.windows.get(&win_id) {
+                let node = win.proxy.get_node(qh, ());
+                let x = if win_x == 0 { (ow - win_w).max(0) / 2 } else { win_x };
+                let y = if win_y == 0 { (oh - win_w).max(0) / 2 } else { win_y };
+                node.set_position(x, y);
+
+                // Protocol borders (compositor-drawn; free).
+                if !fullscreen {
+                    let (bw, br, bg, bb) = if is_active {
+                        let (r, g, b) = parse_hex_to_rgb(&self.config.appearance.accent_color);
+                        (self.config.decorations.border_width_active as i32, r, g, b)
+                    } else {
+                        (self.config.decorations.border_width_inactive as i32, 0x55u32, 0x55u32, 0x55u32)
+                    };
+                    let edges = Edges::Top | Edges::Bottom | Edges::Left | Edges::Right;
+                    win.proxy.set_borders(edges, bw, br, bg, bb, 0xff);
+                } else {
+                    win.proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
+                }
+            }
+
+            // Update and commit the CPU-rendered titlebar surface.
+            if !fullscreen {
+                if let Some(wl_shm) = self.globals.wl_shm.clone() {
+                    if let Some(deco) = self.decorations.get_mut(&win_id) {
+                        decorations::update(
+                            deco, &wl_shm, qh, actual_w,
+                            is_active, &title, &self.config, &self.font_renderer,
+                        );
+                        decorations::commit_in_render_sequence(deco);
+                    }
+                }
+            }
         }
     }
 
@@ -234,12 +284,17 @@ impl AppState {
     }
 
     pub fn remove_window(&mut self, window_id: u64) {
+        // Clean up decoration surface before dropping the window.
+        if let Some(deco) = self.decorations.remove(&window_id) {
+            self.surface_to_window
+                .remove(&(Self::obj_id(&deco.titlebar_surface) as u32));
+            decorations::destroy(deco);
+        }
         self.windows.remove(&window_id);
         self.focus_stack.retain(|&id| id != window_id);
         if self.focused_window == Some(window_id) {
             self.focused_window = self.focus_stack.first().copied();
             if let Some(next_id) = self.focused_window {
-                let next_id = next_id;
                 self.set_focus(next_id);
             }
         }
@@ -284,6 +339,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                 "wl_compositor" => {
                     state.globals.compositor =
                         Some(registry.bind(name, version.min(5), qh, ()));
+                }
+                "wl_shm" => {
+                    state.globals.wl_shm =
+                        Some(registry.bind(name, version.min(1), qh, ()));
                 }
                 "wl_seat" => {
                     let seat: wl_seat::WlSeat = registry.bind(name, version.min(7), qh, name);
@@ -330,9 +389,24 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
             }
             river_window_manager_v1::Event::Window { id } => {
                 let win_id = Self::obj_id(&id);
-                state.windows.insert(win_id, WindowState::new(id));
+                state.windows.insert(win_id, WindowState::new(id.clone()));
                 state.focus_stack.push(win_id);
                 state.layout_dirty = true;
+
+                // Create a titlebar decoration surface for this window.
+                if let (Some(comp), Some(shm)) = (
+                    state.globals.compositor.clone(),
+                    state.globals.wl_shm.clone(),
+                ) {
+                    match decorations::create(&id, &comp, &shm, qh, &state.config) {
+                        Ok(deco) => {
+                            let surf_id = Self::obj_id(&deco.titlebar_surface) as u32;
+                            state.surface_to_window.insert(surf_id, win_id);
+                            state.decorations.insert(win_id, deco);
+                        }
+                        Err(e) => eprintln!("stratum-wm: decoration create failed: {e}"),
+                    }
+                }
             }
             river_window_manager_v1::Event::Output { id } => {
                 let out_id = Self::obj_id(&id);
@@ -542,6 +616,20 @@ impl Dispatch<RiverXkbBindingV1, String> for AppState {
     }
 }
 
+// ── RiverDecorationV1 ────────────────────────────────────────────────────────
+
+impl Dispatch<RiverDecorationV1, ()> for AppState {
+    fn event(
+        _: &mut Self,
+        _: &RiverDecorationV1,
+        _: river_decoration_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
 // ── RiverNodeV1 ──────────────────────────────────────────────────────────────
 
 impl Dispatch<RiverNodeV1, ()> for AppState {
@@ -591,6 +679,38 @@ impl Dispatch<wl_compositor::WlCompositor, ()> for AppState {
     fn event(
         _: &mut Self, _: &wl_compositor::WlCompositor,
         _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_shm::WlShm, ()> for AppState {
+    fn event(
+        _: &mut Self, _: &wl_shm::WlShm,
+        _: wl_shm::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_shm_pool::WlShmPool, ()> for AppState {
+    fn event(
+        _: &mut Self, _: &wl_shm_pool::WlShmPool,
+        _: wl_shm_pool::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_buffer::WlBuffer, ()> for AppState {
+    fn event(
+        _: &mut Self, _: &wl_buffer::WlBuffer,
+        _: wl_buffer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_surface::WlSurface, ()> for AppState {
+    fn event(
+        _: &mut Self, _: &wl_surface::WlSurface,
+        _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
     ) {
     }
 }
