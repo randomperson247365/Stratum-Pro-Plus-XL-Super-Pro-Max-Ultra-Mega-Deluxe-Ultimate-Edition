@@ -1,0 +1,39 @@
+[general]
+modifier = "super"
+terminal = "foot"
+
+[appearance]
+theme = "dark"
+accent_color = "#5e81f4"
+font_ui = "Inter"
+font_mono = "JetBrains Mono"
+gap_inner = 8
+gap_outer = 12
+
+[decorations]
+titlebar_height = 28
+border_width_active = 2
+border_width_inactive = 1
+border_radius = 8
+shadow_enabled = true
+shadow_spread = 12
+shadow_opacity = 0.4
+buttons_position = "right"
+buttons = ["minimize", "maximize", "close"]
+
+[keybindings]
+"super+Return" = "spawn_terminal"
+"super+Space"  = "open_launcher"
+"super+q"      = "close_focused"
+"super+f"      = "toggle_fullscreen"
+"super+t"      = "toggle_tiling"
+"super+Tab"    = "focus_next"
+
+[launcher]
+show_recently_used = true
+show_categories = true
+max_recent = 8
+search_settings = true
+
+[autostart]
+programs = []
