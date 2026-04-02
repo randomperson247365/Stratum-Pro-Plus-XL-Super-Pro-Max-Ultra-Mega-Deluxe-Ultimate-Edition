@@ -17,6 +17,15 @@ pub struct WindowState {
     pub floating:    bool,
     pub minimized:   bool,
     pub fullscreen:  bool,
+    // ── Deferred manage-sequence informs ─────────────────────────────────────
+    // Window management state requests (inform_fullscreen, inform_maximized,
+    // inform_resize_start) may ONLY be sent inside a manage sequence.  When
+    // the compositor fires the corresponding request events they arrive BEFORE
+    // manage_start, so we record the intent here and apply it in
+    // handle_manage_start.
+    pub pending_fullscreen_inform: Option<bool>, // Some(true) → inform_fullscreen
+    pub pending_maximized_inform:  Option<bool>, // Some(true) → inform_maximized
+    pub pending_resize_start:      bool,         // true → inform_resize_start
 }
 
 impl WindowState {
@@ -35,6 +44,9 @@ impl WindowState {
             floating:      true,
             minimized:     false,
             fullscreen:    false,
+            pending_fullscreen_inform: None,
+            pending_maximized_inform:  None,
+            pending_resize_start:      false,
         }
     }
 

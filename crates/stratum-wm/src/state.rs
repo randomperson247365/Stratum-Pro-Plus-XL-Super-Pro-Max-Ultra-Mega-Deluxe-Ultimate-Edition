@@ -191,6 +191,36 @@ impl AppState {
             self.apply_floating_layout_manage();
         }
 
+        // ── Apply deferred per-window manage-sequence informs ─────────────────
+        // These requests (inform_fullscreen, inform_maximized, inform_resize_start)
+        // are window management state and may ONLY be sent inside a manage
+        // sequence.  We queued them when the corresponding events arrived (before
+        // manage_start) and apply them now.
+        let win_ids: Vec<u64> = self.windows.keys().copied().collect();
+        for win_id in win_ids {
+            if let Some(win) = self.windows.get_mut(&win_id) {
+                if let Some(fs) = win.pending_fullscreen_inform.take() {
+                    if fs { win.proxy.inform_fullscreen(); } else { win.proxy.inform_not_fullscreen(); }
+                }
+                if let Some(mx) = win.pending_maximized_inform.take() {
+                    if mx { win.proxy.inform_maximized(); } else { win.proxy.inform_unmaximized(); }
+                }
+                if win.pending_resize_start {
+                    win.pending_resize_start = false;
+                    win.proxy.inform_resize_start();
+                }
+            }
+        }
+
+        // ── Apply keyboard focus ──────────────────────────────────────────────
+        // seat.focus_window is a window management state request — manage sequence only.
+        if let Some(win_id) = self.focused_window {
+            let seat_proxy = self.seats.values().next().map(|s| s.proxy.clone());
+            if let (Some(seat), Some(win)) = (seat_proxy, self.windows.get(&win_id)) {
+                seat.focus_window(&win.proxy);
+            }
+        }
+
         // CRITICAL: every manage_start MUST be followed by manage_finish.
         if let Some(rwm) = self.globals.rwm.clone() {
             rwm.manage_finish();
@@ -437,10 +467,10 @@ impl AppState {
     }
 
     pub fn set_focus(&mut self, window_id: u64) {
-        let seat_proxy = self.seats.values().next().map(|s| s.proxy.clone());
-        if let (Some(seat), Some(win)) = (seat_proxy, self.windows.get(&window_id)) {
-            seat.focus_window(&win.proxy);
-        }
+        // NOTE: seat.focus_window() is a window management state request and
+        // may ONLY be called inside a manage sequence.  handle_manage_start
+        // applies it at the end of every manage sequence using self.focused_window.
+        // This function only updates local bookkeeping and IPC.
         self.focused_window = Some(window_id);
         self.focus_stack.retain(|&id| id != window_id);
         self.focus_stack.insert(0, window_id);
@@ -648,23 +678,28 @@ impl Dispatch<RiverWindowV1, ()> for AppState {
             river_window_v1::Event::FullscreenRequested { .. } => {
                 if let Some(win) = state.windows.get_mut(&win_id) {
                     win.fullscreen = true;
+                    // Defer inform_fullscreen to the next manage sequence.
+                    win.pending_fullscreen_inform = Some(true);
                 }
-                proxy.inform_fullscreen();
                 state.layout_dirty = true;
             }
             river_window_v1::Event::ExitFullscreenRequested => {
                 if let Some(win) = state.windows.get_mut(&win_id) {
                     win.fullscreen = false;
+                    win.pending_fullscreen_inform = Some(false);
                 }
-                proxy.inform_not_fullscreen();
                 state.layout_dirty = true;
             }
             river_window_v1::Event::MaximizeRequested => {
-                proxy.inform_maximized();
+                if let Some(win) = state.windows.get_mut(&win_id) {
+                    win.pending_maximized_inform = Some(true);
+                }
                 state.layout_dirty = true;
             }
             river_window_v1::Event::UnmaximizeRequested => {
-                proxy.inform_unmaximized();
+                if let Some(win) = state.windows.get_mut(&win_id) {
+                    win.pending_maximized_inform = Some(false);
+                }
                 state.layout_dirty = true;
             }
             river_window_v1::Event::MinimizeRequested => {
@@ -675,8 +710,10 @@ impl Dispatch<RiverWindowV1, ()> for AppState {
             }
             river_window_v1::Event::PointerMoveRequested { .. }
             | river_window_v1::Event::PointerResizeRequested { .. } => {
-                // Notify River the operation is starting; full drag is Phase 2.
-                proxy.inform_resize_start();
+                // Defer inform_resize_start to the next manage sequence.
+                if let Some(win) = state.windows.get_mut(&win_id) {
+                    win.pending_resize_start = true;
+                }
             }
             river_window_v1::Event::DecorationHint { .. }
             | river_window_v1::Event::DimensionsHint { .. }
