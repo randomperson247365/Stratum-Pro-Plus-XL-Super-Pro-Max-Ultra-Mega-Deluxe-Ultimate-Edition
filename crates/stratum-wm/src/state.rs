@@ -9,6 +9,8 @@ use wayland_client::{
 };
 
 use stratum_config::StratumConfig;
+use stratum_ipc::IpcMessage;
+use tokio::sync::broadcast;
 
 use crate::{
     decorations::{self, TitlebarRenderer, WindowDecoration},
@@ -66,6 +68,8 @@ pub struct AppState {
     /// Maps titlebar wl_surface protocol IDs back to their window.
     pub surface_to_window: HashMap<u32, u64>,
     pub font_renderer:     TitlebarRenderer,
+    // Phase 3 — IPC
+    pub ipc_tx:            Option<broadcast::Sender<IpcMessage>>,
 }
 
 impl AppState {
@@ -84,7 +88,12 @@ impl AppState {
             decorations:       HashMap::new(),
             surface_to_window: HashMap::new(),
             font_renderer:     TitlebarRenderer::new(),
+            ipc_tx:            None,
         }
+    }
+
+    pub fn set_ipc_tx(&mut self, tx: broadcast::Sender<IpcMessage>) {
+        self.ipc_tx = Some(tx);
     }
 
     /// Cheap identifier for a Wayland proxy object.
@@ -281,6 +290,16 @@ impl AppState {
         self.focused_window = Some(window_id);
         self.focus_stack.retain(|&id| id != window_id);
         self.focus_stack.insert(0, window_id);
+
+        // Broadcast focus change over IPC.
+        if let Some(tx) = &self.ipc_tx {
+            if let Some(win) = self.windows.get(&window_id) {
+                let _ = tx.send(IpcMessage::FocusChanged {
+                    app_id: win.app_id.clone().unwrap_or_default(),
+                    title:  win.display_title().to_owned(),
+                });
+            }
+        }
     }
 
     pub fn remove_window(&mut self, window_id: u64) {

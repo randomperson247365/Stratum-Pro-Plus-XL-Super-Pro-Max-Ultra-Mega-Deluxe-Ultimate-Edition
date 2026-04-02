@@ -1,3 +1,7 @@
-fn main() {
-    println!("stratum-shell: not yet implemented (Phase 3)");
+mod app;
+mod ipc;
+mod panel;
+
+fn main() -> anyhow::Result<()> {
+    app::run()
 }

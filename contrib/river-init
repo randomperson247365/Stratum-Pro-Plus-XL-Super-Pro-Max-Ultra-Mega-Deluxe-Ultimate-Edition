@@ -25,5 +25,5 @@ done
 #   - keybinding dispatch from ~/.config/stratum/config.toml
 stratum-wm &
 
-# ── Launch stratum-shell when it's implemented (Phase 3) ────────────────────
-# stratum-shell &
+# ── Launch stratum-shell (Phase 3) ──────────────────────────────────────────
+stratum-shell &

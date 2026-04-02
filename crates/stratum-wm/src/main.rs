@@ -8,6 +8,7 @@ mod state;
 mod window;
 
 use stratum_config::{default_config_path, load_config};
+use stratum_ipc::IpcServer;
 use wayland_client::Connection;
 
 use state::AppState;
@@ -20,6 +21,25 @@ fn main() -> anyhow::Result<()> {
     // Start the inotify config watcher in a background thread.
     let config_rx = stratum_config::watch_config(config_path);
 
+    // Start a tokio multi-thread runtime for the IPC server.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("stratum-wm: failed to build tokio runtime");
+
+    // Bind the IPC socket and get a broadcast sender.
+    let ipc_tx = match IpcServer::bind() {
+        Ok(server) => {
+            let tx = server.tx.clone();
+            rt.spawn(server.run());
+            Some(tx)
+        }
+        Err(e) => {
+            eprintln!("stratum-wm: IPC server bind failed: {e} — shell features disabled");
+            None
+        }
+    };
+
     // Connect to the Wayland display (reads $WAYLAND_DISPLAY).
     let conn = Connection::connect_to_env()
         .expect("stratum-wm: failed to connect to Wayland — is River running?");
@@ -31,6 +51,10 @@ fn main() -> anyhow::Result<()> {
     conn.display().get_registry(&qh, ());
 
     let mut state = AppState::new(config);
+
+    if let Some(tx) = ipc_tx {
+        state.set_ipc_tx(tx);
+    }
 
     // First roundtrip: receive all globals.
     event_queue.roundtrip(&mut state)?;
