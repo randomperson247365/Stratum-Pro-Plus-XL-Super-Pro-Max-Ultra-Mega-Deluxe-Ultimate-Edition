@@ -16,6 +16,7 @@ use crate::{
     decorations::{self, TitlebarRenderer, WindowDecoration},
     decorations::renderer::parse_hex_to_rgb,
     keybinds::{execute_action, parse_keybind, ActionContext},
+    layout::compute_tiles,
     output::OutputState,
     protocol::{
         river_window_management_v1::{
@@ -70,6 +71,8 @@ pub struct AppState {
     pub font_renderer:     TitlebarRenderer,
     // Phase 3 — IPC
     pub ipc_tx:            Option<broadcast::Sender<IpcMessage>>,
+    // Phase 5 — tiling
+    pub tiling_enabled:    bool,
 }
 
 impl AppState {
@@ -89,6 +92,7 @@ impl AppState {
             surface_to_window: HashMap::new(),
             font_renderer:     TitlebarRenderer::new(),
             ipc_tx:            None,
+            tiling_enabled:    false,
         }
     }
 
@@ -155,6 +159,10 @@ impl AppState {
                         let _ = tx.send(IpcMessage::OpenLauncher);
                     }
                 }
+                "toggle_tiling" => {
+                    self.tiling_enabled = !self.tiling_enabled;
+                    self.layout_dirty = true;
+                }
                 "toggle_fullscreen" => {
                     // fullscreen request requires an output; use the first known output.
                     let output = self.outputs.values().next().map(|o| o.proxy.clone());
@@ -193,16 +201,47 @@ impl AppState {
             .map(|o| (o.width as i32, o.height as i32))
             .unwrap_or((1920, 1080));
 
-        for win in self.windows.values() {
-            if win.minimized {
-                win.proxy.hide();
-                continue;
+        if self.tiling_enabled {
+            // Build the ordered list of visible, non-fullscreen window IDs.
+            let visible: Vec<u64> = self.focus_stack
+                .iter()
+                .filter(|id| {
+                    self.windows.get(id)
+                        .map(|w| !w.minimized && !w.fullscreen)
+                        .unwrap_or(false)
+                })
+                .copied()
+                .collect();
+
+            let go  = self.config.appearance.gap_outer as i32;
+            let gi  = self.config.appearance.gap_inner as i32;
+            let tiles = compute_tiles(visible.len(), ow, oh, go, gi);
+
+            for (win_id, tile) in visible.iter().zip(tiles.iter()) {
+                if let Some(win) = self.windows.get(win_id) {
+                    win.proxy.show();
+                    win.proxy.propose_dimensions(tile.width, tile.height);
+                    win.proxy.use_ssd();
+                }
             }
-            win.proxy.show();
-            let w = win.width.max(400).min(ow);
-            let h = win.height.max(300).min(oh);
-            win.proxy.propose_dimensions(w, h);
-            win.proxy.use_ssd();
+            // Hide minimized windows.
+            for win in self.windows.values() {
+                if win.minimized {
+                    win.proxy.hide();
+                }
+            }
+        } else {
+            for win in self.windows.values() {
+                if win.minimized {
+                    win.proxy.hide();
+                    continue;
+                }
+                win.proxy.show();
+                let w = win.width.max(400).min(ow);
+                let h = win.height.max(300).min(oh);
+                win.proxy.propose_dimensions(w, h);
+                win.proxy.use_ssd();
+            }
         }
     }
 
@@ -214,36 +253,37 @@ impl AppState {
             .map(|o| (o.width as i32, o.height as i32))
             .unwrap_or((1920, 1080));
 
-        // Snapshot per-window data to avoid holding a borrow on self.windows
-        // while also mutably borrowing self.decorations later in the loop.
-        let window_data: Vec<(u64, i32, i32, i32, i32, bool, bool, bool, String)> = self
-            .windows
-            .iter()
-            .map(|(id, win)| {
-                let is_active = self.focused_window == Some(*id);
-                let actual_w = if win.actual_width > 0 { win.actual_width } else { win.width };
-                let title = win.display_title().to_owned();
-                (*id, win.x, win.y, win.width, actual_w, win.minimized, win.fullscreen, is_active, title)
-            })
-            .collect();
-
         use crate::protocol::river_window_management_v1::river_window_v1::Edges;
 
-        for (win_id, win_x, win_y, win_w, actual_w, minimized, fullscreen, is_active, title) in window_data {
-            if minimized {
-                continue;
-            }
+        if self.tiling_enabled {
+            // ── Tiling render path ──────────────────────────────────────────
+            // Build ordered visible window list (same order as manage phase).
+            let visible: Vec<u64> = self.focus_stack
+                .iter()
+                .filter(|id| {
+                    self.windows.get(id)
+                        .map(|w| !w.minimized && !w.fullscreen)
+                        .unwrap_or(false)
+                })
+                .copied()
+                .collect();
 
-            // Position the window node.
-            if let Some(win) = self.windows.get(&win_id) {
-                let node = win.proxy.get_node(qh, ());
-                let x = if win_x == 0 { (ow - win_w).max(0) / 2 } else { win_x };
-                let y = if win_y == 0 { (oh - win_w).max(0) / 2 } else { win_y };
-                node.set_position(x, y);
+            let go  = self.config.appearance.gap_outer as i32;
+            let gi  = self.config.appearance.gap_inner as i32;
+            let tiles = compute_tiles(visible.len(), ow, oh, go, gi);
 
-                // Protocol borders (compositor-drawn; free).
-                if !fullscreen {
-                    let (bw, br, bg, bb) = if is_active {
+            // Snapshot per-window data to avoid borrow conflicts.
+            let snap: Vec<(u64, bool)> = visible.iter()
+                .map(|id| (*id, self.focused_window == Some(*id)))
+                .collect();
+
+            for ((win_id, is_active), tile) in snap.iter().zip(tiles.iter()) {
+                if let Some(win) = self.windows.get(win_id) {
+                    let node = win.proxy.get_node(qh, ());
+                    node.set_position(tile.x, tile.y);
+
+                    // Borders only — no titlebars in tiling mode.
+                    let (bw, br, bg, bb) = if *is_active {
                         let (r, g, b) = parse_hex_to_rgb(&self.config.appearance.accent_color);
                         (self.config.decorations.border_width_active as i32, r, g, b)
                     } else {
@@ -251,20 +291,65 @@ impl AppState {
                     };
                     let edges = Edges::Top | Edges::Bottom | Edges::Left | Edges::Right;
                     win.proxy.set_borders(edges, bw, br, bg, bb, 0xff);
-                } else {
-                    win.proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
+                }
+
+                // Detach titlebar so it becomes invisible.
+                if let Some(deco) = self.decorations.get(win_id) {
+                    decorations::detach_titlebar(deco);
                 }
             }
+        } else {
+            // ── Floating render path ────────────────────────────────────────
+            // Snapshot per-window data to avoid holding a borrow on self.windows
+            // while also mutably borrowing self.decorations later in the loop.
+            let window_data: Vec<(u64, i32, i32, i32, i32, bool, bool, bool, String)> = self
+                .windows
+                .iter()
+                .map(|(id, win)| {
+                    let is_active = self.focused_window == Some(*id);
+                    let actual_w = if win.actual_width > 0 { win.actual_width } else { win.width };
+                    let title = win.display_title().to_owned();
+                    (*id, win.x, win.y, win.width, actual_w, win.minimized, win.fullscreen, is_active, title)
+                })
+                .collect();
 
-            // Update and commit the CPU-rendered titlebar surface.
-            if !fullscreen {
-                if let Some(wl_shm) = self.globals.wl_shm.clone() {
-                    if let Some(deco) = self.decorations.get_mut(&win_id) {
-                        decorations::update(
-                            deco, &wl_shm, qh, actual_w,
-                            is_active, &title, &self.config, &self.font_renderer,
-                        );
-                        decorations::commit_in_render_sequence(deco);
+            for (win_id, win_x, win_y, win_w, actual_w, minimized, fullscreen, is_active, title) in window_data {
+                if minimized {
+                    continue;
+                }
+
+                // Position the window node.
+                if let Some(win) = self.windows.get(&win_id) {
+                    let node = win.proxy.get_node(qh, ());
+                    let x = if win_x == 0 { (ow - win_w).max(0) / 2 } else { win_x };
+                    let y = if win_y == 0 { (oh - win_w).max(0) / 2 } else { win_y };
+                    node.set_position(x, y);
+
+                    // Protocol borders (compositor-drawn; free).
+                    if !fullscreen {
+                        let (bw, br, bg, bb) = if is_active {
+                            let (r, g, b) = parse_hex_to_rgb(&self.config.appearance.accent_color);
+                            (self.config.decorations.border_width_active as i32, r, g, b)
+                        } else {
+                            (self.config.decorations.border_width_inactive as i32, 0x55u32, 0x55u32, 0x55u32)
+                        };
+                        let edges = Edges::Top | Edges::Bottom | Edges::Left | Edges::Right;
+                        win.proxy.set_borders(edges, bw, br, bg, bb, 0xff);
+                    } else {
+                        win.proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
+                    }
+                }
+
+                // Update and commit the CPU-rendered titlebar surface.
+                if !fullscreen {
+                    if let Some(wl_shm) = self.globals.wl_shm.clone() {
+                        if let Some(deco) = self.decorations.get_mut(&win_id) {
+                            decorations::update(
+                                deco, &wl_shm, qh, actual_w,
+                                is_active, &title, &self.config, &self.font_renderer,
+                            );
+                            decorations::commit_in_render_sequence(deco);
+                        }
                     }
                 }
             }

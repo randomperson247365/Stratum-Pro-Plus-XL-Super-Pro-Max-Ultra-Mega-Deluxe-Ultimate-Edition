@@ -8,7 +8,7 @@ A desktop environment built in Rust on the [River](https://codeberg.org/river/ri
 - [x] Phase 2 — Decorations (titlebars, borders, shadows)
 - [x] Phase 3 — Shell & Panel (stratum-shell, bottom panel, clock/battery/network/window-title widgets, IPC)
 - [x] Phase 4 — App Launcher (XDG .desktop scanner, fuzzy search, full-screen overlay via Super+Space)
-- [ ] Phase 5 — Tiling Mode (master/stack, Super+T toggle)
+- [x] Phase 5 — Tiling Mode (master/stack layout, Super+T toggle, gaps from config)
 - [ ] Phase 6 — Settings App (Iced GUI, panel editor, keybind remapping)
 - [ ] Phase 7 — Polish & Ship (animations, AUR PKGBUILD, Nix flake)
 
@@ -91,7 +91,7 @@ Config is **hot-reloaded on save** via inotify — no restart needed.
 | `Super+Space` | Open app launcher |
 | `Super+Q` | Close focused window |
 | `Super+F` | Toggle fullscreen |
-| `Super+T` | Toggle tiling *(Phase 5, not yet active)* |
+| `Super+T` | Toggle tiling (master/stack ↔ floating) |
 | `Super+Tab` | Focus next window |
 | `Super+Ctrl+F1..F5` | Switch VT |
 
@@ -104,6 +104,24 @@ All bindings are configurable in `config.toml`:
 "super+f"      = "toggle_fullscreen"
 "super+Tab"    = "focus_next"
 ```
+
+---
+
+## Tiling Mode
+
+Press `Super+T` to toggle between floating and master/stack tiling. The toggle is
+per-session and hot — windows rearrange immediately.
+
+**Layout:** The first window in the focus stack is the *master* (left half). All
+other visible windows share the right half, divided evenly. Gaps are read from config:
+
+```toml
+[appearance]
+gap_outer = 12   # pixels between windows and screen edge
+gap_inner = 8    # pixels between windows
+```
+
+In tiling mode titlebars are hidden; compositor-drawn borders remain active.
 
 ---
 
