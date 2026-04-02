@@ -134,6 +134,16 @@ pub fn commit_in_render_sequence(deco: &WindowDecoration) {
     deco.titlebar_deco.set_offset(0, -deco.height);
 }
 
+/// Hide the titlebar surface by detaching its buffer.
+///
+/// Used in tiling mode to suppress the titlebar without destroying the
+/// decoration (so it can be re-shown when switching back to floating).
+pub fn detach_titlebar(deco: &WindowDecoration) {
+    deco.titlebar_deco.sync_next_commit();
+    deco.titlebar_surface.attach(None, 0, 0);
+    deco.titlebar_surface.commit();
+}
+
 /// Destroy all Wayland objects owned by the decoration.
 pub fn destroy(deco: WindowDecoration) {
     deco.buffer.destroy();

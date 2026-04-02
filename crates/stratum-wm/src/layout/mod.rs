@@ -1,6 +1,8 @@
 pub mod floating;
+pub mod tiling;
 
 pub use floating::FloatingLayout;
+pub use tiling::{compute as compute_tiles, TileGeometry};
 
 /// A rectangle describing a window's proposed position and size.
 #[derive(Debug, Clone, Copy)]
