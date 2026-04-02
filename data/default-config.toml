@@ -21,6 +21,11 @@ shadow_opacity = 0.4
 buttons_position = "right"
 buttons = ["minimize", "maximize", "close"]
 
+[layout]
+default_mode    = "floating"
+min_tile_width  = 400
+min_tile_height = 280
+
 [keybindings]
 "super+Return" = "spawn_terminal"
 "super+Space"  = "open_launcher"

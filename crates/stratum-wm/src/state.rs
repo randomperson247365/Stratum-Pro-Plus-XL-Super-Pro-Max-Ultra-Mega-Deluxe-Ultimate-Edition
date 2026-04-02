@@ -17,7 +17,7 @@ use crate::{
     decorations::{self, TitlebarRenderer, WindowDecoration},
     decorations::renderer::parse_hex_to_rgb,
     keybinds::{execute_action, parse_keybind, ActionContext},
-    layout::compute_tiles,
+    layout::{compute_bsp, compute_tiles, LayoutMode},
     output::OutputState,
     protocol::{
         river_window_management_v1::{
@@ -73,7 +73,7 @@ pub struct AppState {
     // Phase 3 — IPC
     pub ipc_tx:            Option<broadcast::Sender<IpcMessage>>,
     // Phase 5 — tiling
-    pub tiling_enabled:    bool,
+    pub layout_mode:       LayoutMode,
     // Phase 7 — animations
     pub animations:        HashMap<u64, WindowAnimation>,
 }
@@ -95,7 +95,7 @@ impl AppState {
             surface_to_window: HashMap::new(),
             font_renderer:     TitlebarRenderer::new(),
             ipc_tx:            None,
-            tiling_enabled:    false,
+            layout_mode:       LayoutMode::Floating,
             animations:        HashMap::new(),
         }
     }
@@ -163,8 +163,8 @@ impl AppState {
                         let _ = tx.send(IpcMessage::OpenLauncher);
                     }
                 }
-                "toggle_tiling" => {
-                    self.tiling_enabled = !self.tiling_enabled;
+                "toggle_tiling" | "cycle_layout" => {
+                    self.layout_mode = self.layout_mode.cycle();
                     self.layout_dirty = true;
                 }
                 "toggle_fullscreen" => {
@@ -197,6 +197,24 @@ impl AppState {
         }
     }
 
+    /// DPI-aware minimum tile dimensions. Thresholds are configured in pixels at
+    /// 96 dpi and scaled proportionally when the display reports its physical size.
+    fn min_tile_size(&self) -> (i32, i32) {
+        let bw = self.config.layout.min_tile_width  as i32;
+        let bh = self.config.layout.min_tile_height as i32;
+        if let Some(dpi) = self.outputs.values().next().and_then(|o| o.dpi()) {
+            let scale = (dpi / 96.0).max(1.0);
+            return ((bw as f32 * scale) as i32, (bh as f32 * scale) as i32);
+        }
+        (bw, bh)
+    }
+
+    /// True when at least one computed tile is too small to be usable.
+    fn needs_deck_fallback(&self, tiles: &[crate::layout::TileGeometry]) -> bool {
+        let (min_w, min_h) = self.min_tile_size();
+        tiles.iter().any(|t| t.width < min_w || t.height < min_h)
+    }
+
     fn apply_floating_layout_manage(&self) {
         let (ow, oh) = self
             .outputs
@@ -205,46 +223,52 @@ impl AppState {
             .map(|o| (o.width as i32, o.height as i32))
             .unwrap_or((1920, 1080));
 
-        if self.tiling_enabled {
-            // Build the ordered list of visible, non-fullscreen window IDs.
-            let visible: Vec<u64> = self.focus_stack
-                .iter()
-                .filter(|id| {
-                    self.windows.get(id)
-                        .map(|w| !w.minimized && !w.fullscreen)
-                        .unwrap_or(false)
-                })
-                .copied()
-                .collect();
+        match self.layout_mode {
+            LayoutMode::MasterStack | LayoutMode::Bsp => {
+                // Build the ordered list of visible, non-fullscreen window IDs.
+                let visible: Vec<u64> = self.focus_stack
+                    .iter()
+                    .filter(|id| {
+                        self.windows.get(id)
+                            .map(|w| !w.minimized && !w.fullscreen)
+                            .unwrap_or(false)
+                    })
+                    .copied()
+                    .collect();
 
-            let go  = self.config.appearance.gap_outer as i32;
-            let gi  = self.config.appearance.gap_inner as i32;
-            let tiles = compute_tiles(visible.len(), ow, oh, go, gi);
+                let go = self.config.appearance.gap_outer as i32;
+                let gi = self.config.appearance.gap_inner as i32;
+                let tiles = match self.layout_mode {
+                    LayoutMode::MasterStack => compute_tiles(visible.len(), ow, oh, go, gi),
+                    _                       => compute_bsp(visible.len(), ow, oh, go, gi),
+                };
 
-            for (win_id, tile) in visible.iter().zip(tiles.iter()) {
-                if let Some(win) = self.windows.get(win_id) {
+                for (win_id, tile) in visible.iter().zip(tiles.iter()) {
+                    if let Some(win) = self.windows.get(win_id) {
+                        win.proxy.show();
+                        win.proxy.propose_dimensions(tile.width, tile.height);
+                        win.proxy.use_ssd();
+                    }
+                }
+                // Hide minimized windows.
+                for win in self.windows.values() {
+                    if win.minimized {
+                        win.proxy.hide();
+                    }
+                }
+            }
+            LayoutMode::Floating => {
+                for win in self.windows.values() {
+                    if win.minimized {
+                        win.proxy.hide();
+                        continue;
+                    }
                     win.proxy.show();
-                    win.proxy.propose_dimensions(tile.width, tile.height);
+                    let w = win.width.max(400).min(ow);
+                    let h = win.height.max(300).min(oh);
+                    win.proxy.propose_dimensions(w, h);
                     win.proxy.use_ssd();
                 }
-            }
-            // Hide minimized windows.
-            for win in self.windows.values() {
-                if win.minimized {
-                    win.proxy.hide();
-                }
-            }
-        } else {
-            for win in self.windows.values() {
-                if win.minimized {
-                    win.proxy.hide();
-                    continue;
-                }
-                win.proxy.show();
-                let w = win.width.max(400).min(ow);
-                let h = win.height.max(300).min(oh);
-                win.proxy.propose_dimensions(w, h);
-                win.proxy.use_ssd();
             }
         }
     }
@@ -259,95 +283,59 @@ impl AppState {
 
         use crate::protocol::river_window_management_v1::river_window_v1::Edges;
 
-        if self.tiling_enabled {
-            // ── Tiling render path ──────────────────────────────────────────
-            // Build ordered visible window list (same order as manage phase).
-            let visible: Vec<u64> = self.focus_stack
-                .iter()
-                .filter(|id| {
-                    self.windows.get(id)
-                        .map(|w| !w.minimized && !w.fullscreen)
-                        .unwrap_or(false)
-                })
-                .copied()
-                .collect();
+        match self.layout_mode {
+            LayoutMode::MasterStack | LayoutMode::Bsp => {
+                // ── Tiled render path (MasterStack and BSP) ─────────────────
+                let visible: Vec<u64> = self.focus_stack
+                    .iter()
+                    .filter(|id| {
+                        self.windows.get(id)
+                            .map(|w| !w.minimized && !w.fullscreen)
+                            .unwrap_or(false)
+                    })
+                    .copied()
+                    .collect();
 
-            let go  = self.config.appearance.gap_outer as i32;
-            let gi  = self.config.appearance.gap_inner as i32;
-            let tiles = compute_tiles(visible.len(), ow, oh, go, gi);
+                let go = self.config.appearance.gap_outer as i32;
+                let gi = self.config.appearance.gap_inner as i32;
+                let tiles = match self.layout_mode {
+                    LayoutMode::MasterStack => compute_tiles(visible.len(), ow, oh, go, gi),
+                    _                       => compute_bsp(visible.len(), ow, oh, go, gi),
+                };
 
-            // Snapshot per-window data to avoid borrow conflicts.
-            let snap: Vec<(u64, bool)> = visible.iter()
-                .map(|id| (*id, self.focused_window == Some(*id)))
-                .collect();
+                // Snapshot to avoid borrow conflicts.
+                let snap: Vec<(u64, bool)> = visible.iter()
+                    .map(|id| (*id, self.focused_window == Some(*id)))
+                    .collect();
 
-            for ((win_id, is_active), tile) in snap.iter().zip(tiles.iter()) {
-                if let Some(win) = self.windows.get(win_id) {
-                    let node = win.proxy.get_node(qh, ());
-                    let (px, py) = if let Some(anim) = self.animations.get_mut(win_id) {
-                        anim.set_target(tile.x, tile.y);
-                        let pos = anim.current_pos();
-                        if anim.is_done() { self.animations.remove(win_id); }
-                        pos
-                    } else {
-                        (tile.x, tile.y)
-                    };
-                    node.set_position(px, py);
+                // Deck fallback: if any tile is too small to read, stack all
+                // windows at the focused window's BSP/master-stack tile instead.
+                let use_deck_fallback = self.needs_deck_fallback(&tiles);
+                let focused_idx = if use_deck_fallback {
+                    snap.iter()
+                        .position(|(id, _)| self.focused_window == Some(*id))
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
 
-                    // Borders only — no titlebars in tiling mode.
-                    let (bw, br, bg, bb) = if *is_active {
-                        let (r, g, b) = parse_hex_to_rgb(&self.config.appearance.accent_color);
-                        (self.config.decorations.border_width_active as i32, r, g, b)
-                    } else {
-                        (self.config.decorations.border_width_inactive as i32, 0x55u32, 0x55u32, 0x55u32)
-                    };
-                    let edges = Edges::Top | Edges::Bottom | Edges::Left | Edges::Right;
-                    win.proxy.set_borders(edges, bw, br, bg, bb, 0xff);
-                }
+                for (i, (win_id, is_active)) in snap.iter().enumerate() {
+                    let tile = if use_deck_fallback { tiles[focused_idx] } else { tiles[i] };
 
-                // Detach titlebar so it becomes invisible.
-                if let Some(deco) = self.decorations.get(win_id) {
-                    decorations::detach_titlebar(deco);
-                }
-            }
-        } else {
-            // ── Floating render path ────────────────────────────────────────
-            // Snapshot per-window data to avoid holding a borrow on self.windows
-            // while also mutably borrowing self.decorations later in the loop.
-            let window_data: Vec<(u64, i32, i32, i32, i32, bool, bool, bool, String)> = self
-                .windows
-                .iter()
-                .map(|(id, win)| {
-                    let is_active = self.focused_window == Some(*id);
-                    let actual_w = if win.actual_width > 0 { win.actual_width } else { win.width };
-                    let title = win.display_title().to_owned();
-                    (*id, win.x, win.y, win.width, actual_w, win.minimized, win.fullscreen, is_active, title)
-                })
-                .collect();
+                    if let Some(win) = self.windows.get(win_id) {
+                        let node = win.proxy.get_node(qh, ());
+                        let (px, py) = if let Some(anim) = self.animations.get_mut(win_id) {
+                            anim.set_target(tile.x, tile.y);
+                            let pos = anim.current_pos();
+                            if anim.is_done() { self.animations.remove(win_id); }
+                            pos
+                        } else {
+                            (tile.x, tile.y)
+                        };
+                        node.set_position(px, py);
 
-            for (win_id, win_x, win_y, win_w, actual_w, minimized, fullscreen, is_active, title) in window_data {
-                if minimized {
-                    continue;
-                }
-
-                // Position the window node, applying slide-in animation if active.
-                if let Some(win) = self.windows.get(&win_id) {
-                    let node = win.proxy.get_node(qh, ());
-                    let tx = if win_x == 0 { (ow - win_w).max(0) / 2 } else { win_x };
-                    let ty = if win_y == 0 { (oh - win_w).max(0) / 2 } else { win_y };
-                    let (x, y) = if let Some(anim) = self.animations.get_mut(&win_id) {
-                        anim.set_target(tx, ty);
-                        let pos = anim.current_pos();
-                        if anim.is_done() { self.animations.remove(&win_id); }
-                        pos
-                    } else {
-                        (tx, ty)
-                    };
-                    node.set_position(x, y);
-
-                    // Protocol borders (compositor-drawn; free).
-                    if !fullscreen {
-                        let (bw, br, bg, bb) = if is_active {
+                        // Borders only — no titlebars in tiling mode.
+                        let (bw, br, bg, bb) = if *is_active {
                             let (r, g, b) = parse_hex_to_rgb(&self.config.appearance.accent_color);
                             (self.config.decorations.border_width_active as i32, r, g, b)
                         } else {
@@ -355,20 +343,74 @@ impl AppState {
                         };
                         let edges = Edges::Top | Edges::Bottom | Edges::Left | Edges::Right;
                         win.proxy.set_borders(edges, bw, br, bg, bb, 0xff);
-                    } else {
-                        win.proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
+                    }
+
+                    // Detach titlebar so it becomes invisible.
+                    if let Some(deco) = self.decorations.get(win_id) {
+                        decorations::detach_titlebar(deco);
                     }
                 }
+            }
+            LayoutMode::Floating => {
+                // ── Floating render path ────────────────────────────────────
+                // Snapshot per-window data to avoid holding a borrow on self.windows
+                // while also mutably borrowing self.decorations later in the loop.
+                let window_data: Vec<(u64, i32, i32, i32, i32, bool, bool, bool, String)> = self
+                    .windows
+                    .iter()
+                    .map(|(id, win)| {
+                        let is_active = self.focused_window == Some(*id);
+                        let actual_w = if win.actual_width > 0 { win.actual_width } else { win.width };
+                        let title = win.display_title().to_owned();
+                        (*id, win.x, win.y, win.width, actual_w, win.minimized, win.fullscreen, is_active, title)
+                    })
+                    .collect();
 
-                // Update and commit the CPU-rendered titlebar surface.
-                if !fullscreen {
-                    if let Some(wl_shm) = self.globals.wl_shm.clone() {
-                        if let Some(deco) = self.decorations.get_mut(&win_id) {
-                            decorations::update(
-                                deco, &wl_shm, qh, actual_w,
-                                is_active, &title, &self.config, &self.font_renderer,
-                            );
-                            decorations::commit_in_render_sequence(deco);
+                for (win_id, win_x, win_y, win_w, actual_w, minimized, fullscreen, is_active, title) in window_data {
+                    if minimized {
+                        continue;
+                    }
+
+                    // Position the window node, applying slide-in animation if active.
+                    if let Some(win) = self.windows.get(&win_id) {
+                        let node = win.proxy.get_node(qh, ());
+                        let tx = if win_x == 0 { (ow - win_w).max(0) / 2 } else { win_x };
+                        let ty = if win_y == 0 { (oh - win_w).max(0) / 2 } else { win_y };
+                        let (x, y) = if let Some(anim) = self.animations.get_mut(&win_id) {
+                            anim.set_target(tx, ty);
+                            let pos = anim.current_pos();
+                            if anim.is_done() { self.animations.remove(&win_id); }
+                            pos
+                        } else {
+                            (tx, ty)
+                        };
+                        node.set_position(x, y);
+
+                        // Protocol borders (compositor-drawn; free).
+                        if !fullscreen {
+                            let (bw, br, bg, bb) = if is_active {
+                                let (r, g, b) = parse_hex_to_rgb(&self.config.appearance.accent_color);
+                                (self.config.decorations.border_width_active as i32, r, g, b)
+                            } else {
+                                (self.config.decorations.border_width_inactive as i32, 0x55u32, 0x55u32, 0x55u32)
+                            };
+                            let edges = Edges::Top | Edges::Bottom | Edges::Left | Edges::Right;
+                            win.proxy.set_borders(edges, bw, br, bg, bb, 0xff);
+                        } else {
+                            win.proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
+                        }
+                    }
+
+                    // Update and commit the CPU-rendered titlebar surface.
+                    if !fullscreen {
+                        if let Some(wl_shm) = self.globals.wl_shm.clone() {
+                            if let Some(deco) = self.decorations.get_mut(&win_id) {
+                                decorations::update(
+                                    deco, &wl_shm, qh, actual_w,
+                                    is_active, &title, &self.config, &self.font_renderer,
+                                );
+                                decorations::commit_in_render_sequence(deco);
+                            }
                         }
                     }
                 }
@@ -860,8 +902,22 @@ impl Dispatch<wl_seat::WlSeat, u32> for AppState {
 
 impl Dispatch<wl_output::WlOutput, u32> for AppState {
     fn event(
-        _: &mut Self, _: &wl_output::WlOutput,
-        _: wl_output::Event, _: &u32, _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _proxy: &wl_output::WlOutput,
+        event: wl_output::Event,
+        name: &u32,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
     ) {
+        // Capture physical display dimensions so we can compute DPI for the
+        // deck-fallback tile-size threshold in apply_floating_layout_render.
+        if let wl_output::Event::Geometry { physical_width, physical_height, .. } = event {
+            for out in state.outputs.values_mut() {
+                if out.wl_output_name == Some(*name) {
+                    out.physical_width_mm  = Some(physical_width);
+                    out.physical_height_mm = Some(physical_height);
+                }
+            }
+        }
     }
 }

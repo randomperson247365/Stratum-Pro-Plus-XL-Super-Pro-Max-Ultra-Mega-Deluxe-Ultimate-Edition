@@ -26,6 +26,10 @@ pub enum Message {
     ShadowToggled(bool),
     ShadowSpreadChanged(String),
     ShadowOpacityChanged(String),
+    // Layout
+    LayoutModeChanged(String),
+    MinTileWidthChanged(String),
+    MinTileHeightChanged(String),
     // Keybindings
     KeyChanged(usize, String),
     ActionChanged(usize, String),
@@ -64,6 +68,11 @@ pub struct SettingsApp {
     pub shadow_spread:    String,
     pub shadow_opacity:   String,
 
+    // Layout
+    pub layout_mode:     String,
+    pub min_tile_width:  String,
+    pub min_tile_height: String,
+
     // Keybindings
     pub keybinds: Vec<(String, String)>,
 }
@@ -98,6 +107,10 @@ impl SettingsApp {
             shadow_spread:   config.decorations.shadow_spread.to_string(),
             shadow_opacity:  format!("{:.2}", config.decorations.shadow_opacity),
 
+            layout_mode:     config.layout.default_mode.clone(),
+            min_tile_width:  config.layout.min_tile_width.to_string(),
+            min_tile_height: config.layout.min_tile_height.to_string(),
+
             keybinds,
         }
     }
@@ -122,6 +135,10 @@ impl SettingsApp {
         if let Ok(v) = self.shadow_opacity.trim().parse::<f32>() {
             config.decorations.shadow_opacity = v.clamp(0.0, 1.0);
         }
+
+        config.layout.default_mode = self.layout_mode.clone();
+        if let Ok(v) = self.min_tile_width.trim().parse()  { config.layout.min_tile_width  = v; }
+        if let Ok(v) = self.min_tile_height.trim().parse() { config.layout.min_tile_height = v; }
 
         config.keybindings.0 = self.keybinds
             .iter()
@@ -159,6 +176,10 @@ pub fn update(state: &mut SettingsApp, msg: Message) -> Task<Message> {
         Message::ShadowToggled(v)         => state.shadow_enabled  = v,
         Message::ShadowSpreadChanged(v)   => state.shadow_spread   = v,
         Message::ShadowOpacityChanged(v)  => state.shadow_opacity  = v,
+
+        Message::LayoutModeChanged(v)    => state.layout_mode     = v,
+        Message::MinTileWidthChanged(v)  => state.min_tile_width  = v,
+        Message::MinTileHeightChanged(v) => state.min_tile_height = v,
 
         Message::KeyChanged(i, v)    => { if let Some(r) = state.keybinds.get_mut(i) { r.0 = v; } }
         Message::ActionChanged(i, v) => { if let Some(r) = state.keybinds.get_mut(i) { r.1 = v; } }

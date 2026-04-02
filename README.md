@@ -8,7 +8,7 @@ A desktop environment built in Rust on the [River](https://codeberg.org/river/ri
 - [x] Phase 2 — Decorations (titlebars, borders, shadows)
 - [x] Phase 3 — Shell & Panel (stratum-shell, bottom panel, clock/battery/network/window-title widgets, IPC)
 - [x] Phase 4 — App Launcher (XDG .desktop scanner, fuzzy search, full-screen overlay via Super+Space)
-- [x] Phase 5 — Tiling Mode (master/stack layout, Super+T toggle, gaps from config)
+- [x] Phase 5 — Tiling Mode (master-stack + BSP layouts, Super+T cycle, deck auto-fallback, DPI-aware min-tile thresholds)
 - [x] Phase 6 — Settings App (Iced GUI: Appearance / Decorations / Keybindings tabs, TOML save)
 - [x] Phase 7 — Polish & Ship (window slide-in animations, AUR PKGBUILD, Nix flake)
 
@@ -93,7 +93,7 @@ Config is **hot-reloaded on save** via inotify — no restart needed.
 | `Super+Space` | Open app launcher |
 | `Super+Q` | Close focused window |
 | `Super+F` | Toggle fullscreen |
-| `Super+T` | Toggle tiling (master/stack ↔ floating) |
+| `Super+T` | Cycle layout mode (Floating → Master-Stack → BSP → …) |
 | `Super+Tab` | Focus next window |
 | `Super+Ctrl+F1..F5` | Switch VT |
 
@@ -109,21 +109,46 @@ All bindings are configurable in `config.toml`:
 
 ---
 
-## Tiling Mode
+## Layout Modes
 
-Press `Super+T` to toggle between floating and master/stack tiling. The toggle is
-per-session and hot — windows rearrange immediately.
+Press `Super+T` to cycle through layout modes. The switch is per-session and hot —
+windows rearrange immediately.
 
-**Layout:** The first window in the focus stack is the *master* (left half). All
-other visible windows share the right half, divided evenly. Gaps are read from config:
+| Mode | `Super+T` order | Description |
+|------|----------------|-------------|
+| Floating | 1st | Free-form windows with titlebars |
+| Master-Stack | 2nd | Left master pane + evenly-split right stack |
+| BSP | 3rd | Recursive binary-space partition (alternates vertical/horizontal splits) |
+
+In tiling modes (Master-Stack and BSP) titlebars are hidden; compositor-drawn borders remain active.
+
+### Deck auto-fallback
+
+When the output is too small to fit all tiled windows above the minimum readable
+size, both tiling modes automatically switch to a *deck* arrangement: all windows
+are stacked at the **focused window's computed tile position** rather than rendered
+as tiny, unusable panes. Cycling focus with `Super+Tab` shifts the deck to the next
+window's tile position, so the spatial layout stays intact — just stacked instead of
+side-by-side.
+
+The minimum tile size is configured in pixels at 96 dpi. When the display reports
+its physical dimensions (`wl_output::Geometry`), the thresholds are scaled
+proportionally so they represent the same physical area on any density screen.
+
+```toml
+[layout]
+default_mode    = "floating"   # floating | master_stack | bsp
+min_tile_width  = 400          # px at 96 dpi
+min_tile_height = 280          # px at 96 dpi
+```
+
+Gap sizes apply to all tiling modes:
 
 ```toml
 [appearance]
 gap_outer = 12   # pixels between windows and screen edge
 gap_inner = 8    # pixels between windows
 ```
-
-In tiling mode titlebars are hidden; compositor-drawn borders remain active.
 
 ---
 
