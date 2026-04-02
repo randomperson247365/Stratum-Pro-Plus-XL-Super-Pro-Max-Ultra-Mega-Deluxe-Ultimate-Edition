@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 stratum-config  = { path = "../stratum-config" }
 stratum-ipc     = { path = "../stratum-ipc" }
+tokio           = { workspace = true }
 
 wayland-client          = "0.31"
 wayland-protocols       = { version = "0.32", features = ["client", "staging", "unstable"] }

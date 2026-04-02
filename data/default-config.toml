@@ -37,3 +37,10 @@ search_settings = true
 
 [autostart]
 programs = []
+
+[[panels]]
+position = "bottom"
+height    = 40
+widgets_left   = ["window_title"]
+widgets_center = []
+widgets_right  = ["clock", "network", "battery"]
