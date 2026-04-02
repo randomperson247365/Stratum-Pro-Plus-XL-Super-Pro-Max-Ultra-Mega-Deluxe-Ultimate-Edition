@@ -7,6 +7,8 @@ use iced_layershell::settings::{LayerShellSettings, Settings};
 use stratum_ipc::IpcMessage;
 
 use crate::ipc::ipc_subscription;
+use crate::launcher::{self, AppEntry};
+use crate::launcher::view::launcher_view;
 use crate::panel::panel_view;
 
 // ── Messages ─────────────────────────────────────────────────────────────────
@@ -17,22 +19,46 @@ pub enum Message {
     Tick,
     /// Incoming IPC event from stratum-wm.
     IpcEvent(IpcMessage),
+    // Launcher
+    QueryChanged(String),
+    Launch(String),   // exec string
+    CloseLauncher,
+    // Layershell geometry commands (routed via TryInto, never reach update()).
+    GoFullscreen,
+    GoPanel,
 }
 
-/// iced_layershell requires Message to implement
-/// TryInto<LayershellCustomActions, Error = Message>.
-/// We never emit layershell actions, so we always return Err.
+/// iced_layershell routes messages through TryInto<LayershellCustomActions>
+/// before delivering them to update(). Variants that convert successfully are
+/// consumed as layer-shell actions; the rest (Err) proceed to update() as normal.
 impl TryInto<LayershellCustomActions> for Message {
     type Error = Self;
+
     fn try_into(self) -> Result<LayershellCustomActions, Self> {
-        Err(self)
+        match self {
+            // Expand the window to fill the whole screen.
+            Message::GoFullscreen => Ok(LayershellCustomActions::AnchorSizeChange(
+                Anchor::Left | Anchor::Right | Anchor::Top | Anchor::Bottom,
+                (0, 0),
+            )),
+            // Shrink back to a 40 px bottom strip.
+            Message::GoPanel => Ok(LayershellCustomActions::AnchorSizeChange(
+                Anchor::Left | Anchor::Right | Anchor::Bottom,
+                (0, 40),
+            )),
+            other => Err(other),
+        }
     }
 }
 
 // ── Application state ─────────────────────────────────────────────────────────
 
 pub struct ShellApp {
-    pub focused_title: String,
+    pub focused_title:  String,
+    pub launcher_open:  bool,
+    pub launcher_query: String,
+    pub all_apps:       Vec<AppEntry>,
+    pub filtered_apps:  Vec<AppEntry>,
 }
 
 impl Application for ShellApp {
@@ -42,9 +68,15 @@ impl Application for ShellApp {
     type Flags = ();
 
     fn new(_flags: ()) -> (Self, Task<Message>) {
+        let all_apps = launcher::load_apps();
+        let filtered_apps = all_apps.iter().take(8).cloned().collect();
         (
             Self {
                 focused_title: String::new(),
+                launcher_open: false,
+                launcher_query: String::new(),
+                all_apps,
+                filtered_apps,
             },
             Task::none(),
         )
@@ -56,27 +88,78 @@ impl Application for ShellApp {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Tick => {} // clock widget reads Local::now() directly in view()
-            Message::IpcEvent(IpcMessage::FocusChanged { title, .. }) => {
-                self.focused_title = title;
+            Message::Tick => Task::none(),
+
+            Message::IpcEvent(msg) => match msg {
+                IpcMessage::FocusChanged { title, .. } => {
+                    self.focused_title = title;
+                    Task::none()
+                }
+                IpcMessage::OpenLauncher => {
+                    self.launcher_open = true;
+                    self.launcher_query.clear();
+                    self.filtered_apps = self.all_apps.iter().take(8).cloned().collect();
+                    // Resize to fullscreen — routed through TryInto, not update().
+                    Task::done(Message::GoFullscreen)
+                }
+                _ => Task::none(),
+            },
+
+            Message::QueryChanged(q) => {
+                self.filtered_apps = launcher::fuzzy_filter(&self.all_apps, &q)
+                    .into_iter()
+                    .cloned()
+                    .collect();
+                self.launcher_query = q;
+                Task::none()
             }
-            Message::IpcEvent(_) => {}
+
+            Message::Launch(exec) => {
+                let _ = std::process::Command::new("sh")
+                    .args(["-c", &exec])
+                    .spawn();
+                self.launcher_open = false;
+                self.launcher_query.clear();
+                Task::done(Message::GoPanel)
+            }
+
+            Message::CloseLauncher => {
+                self.launcher_open = false;
+                self.launcher_query.clear();
+                Task::done(Message::GoPanel)
+            }
+
+            // These are intercepted by TryInto before reaching update().
+            Message::GoFullscreen | Message::GoPanel => Task::none(),
         }
-        Task::none()
     }
 
     fn view(&self) -> Element<Message> {
-        container(panel_view(self))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        if self.launcher_open {
+            launcher_view(self)
+        } else {
+            container(panel_view(self))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        }
     }
 
     fn subscription(&self) -> Subscription<Message> {
         let ipc = ipc_subscription();
         let tick = iced::time::every(std::time::Duration::from_secs(30))
             .map(|_| Message::Tick);
-        Subscription::batch([ipc, tick])
+
+        // Close launcher on Escape.
+        let esc = iced::keyboard::on_key_press(|key, _mods| {
+            if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) {
+                Some(Message::CloseLauncher)
+            } else {
+                None
+            }
+        });
+
+        Subscription::batch([ipc, tick, esc])
     }
 }
 

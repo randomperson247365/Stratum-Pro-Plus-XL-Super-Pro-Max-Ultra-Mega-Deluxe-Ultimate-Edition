@@ -150,6 +150,11 @@ impl AppState {
 
             match action.as_str() {
                 "focus_next" => self.focus_next(),
+                "open_launcher" => {
+                    if let Some(tx) = &self.ipc_tx {
+                        let _ = tx.send(IpcMessage::OpenLauncher);
+                    }
+                }
                 "toggle_fullscreen" => {
                     // fullscreen request requires an output; use the first known output.
                     let output = self.outputs.values().next().map(|o| o.proxy.clone());

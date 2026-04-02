@@ -6,8 +6,8 @@ A desktop environment built in Rust on the [River](https://codeberg.org/river/ri
 
 - [x] Phase 1 — Foundation (workspace, River WM protocol, floating layout, keybinds)
 - [x] Phase 2 — Decorations (titlebars, borders, shadows)
-- [ ] Phase 3 — Shell & Panel (stratum-shell, widgets, system tray)
-- [ ] Phase 4 — App Launcher (XDG .desktop, fuzzy search, split view)
+- [x] Phase 3 — Shell & Panel (stratum-shell, bottom panel, clock/battery/network/window-title widgets, IPC)
+- [x] Phase 4 — App Launcher (XDG .desktop scanner, fuzzy search, full-screen overlay via Super+Space)
 - [ ] Phase 5 — Tiling Mode (master/stack, Super+T toggle)
 - [ ] Phase 6 — Settings App (Iced GUI, panel editor, keybind remapping)
 - [ ] Phase 7 — Polish & Ship (animations, AUR PKGBUILD, Nix flake)
@@ -39,6 +39,7 @@ Run these after building:
 
 ```bash
 sudo install -Dm755 target/release/stratum-wm        /usr/local/bin/stratum-wm
+sudo install -Dm755 target/release/stratum-shell     /usr/local/bin/stratum-shell
 sudo install -Dm755 contrib/river-init               /usr/local/bin/stratum-river-init
 sudo install -Dm644 data/stratum.desktop             /usr/share/wayland-sessions/stratum.desktop
 sudo install -Dm644 data/default-config.toml         /etc/stratum/config.toml
@@ -66,6 +67,10 @@ River handles Wayland rendering. `stratum-wm` is the policy layer: it manages
 window positions, draws server-side decorations (titlebars, borders, shadows),
 dispatches keybindings, and communicates with the shell via IPC.
 
+`stratum-shell` runs as a separate process, anchored to the bottom of the screen
+as a Wayland layer-shell surface. It receives focus/workspace events over the IPC
+socket and expands to a full-screen launcher overlay on `Super+Space`.
+
 ---
 
 ## Config
@@ -83,10 +88,10 @@ Config is **hot-reloaded on save** via inotify — no restart needed.
 | Key | Action |
 |-----|--------|
 | `Super+Return` | Open terminal (foot) |
-| `Super+Space` | Open launcher *(Phase 4)* |
+| `Super+Space` | Open app launcher |
 | `Super+Q` | Close focused window |
 | `Super+F` | Toggle fullscreen |
-| `Super+T` | Toggle tiling *(Phase 5)* |
+| `Super+T` | Toggle tiling *(Phase 5, not yet active)* |
 | `Super+Tab` | Focus next window |
 | `Super+Ctrl+F1..F5` | Switch VT |
 
@@ -98,6 +103,26 @@ All bindings are configurable in `config.toml`:
 "super+q"      = "close_focused"
 "super+f"      = "toggle_fullscreen"
 "super+Tab"    = "focus_next"
+```
+
+---
+
+## App Launcher
+
+Press `Super+Space` to open the launcher overlay. stratum-shell expands to fill
+the screen, showing a fuzzy-search box and a list of all XDG `.desktop` applications
+found in `/usr/share/applications` and `~/.local/share/applications`.
+
+- Type to filter (case-insensitive, ranked by prefix > contains)
+- Click a row or press `Enter` to launch
+- Press `Escape` to dismiss
+
+```toml
+[launcher]
+show_recently_used = true
+show_categories    = true
+max_recent         = 8
+search_settings    = true
 ```
 
 ---
@@ -126,7 +151,7 @@ buttons             = ["minimize", "maximize", "close"]
 | `stratum-wm` | `stratum-wm` | Window manager (River protocol client) |
 | `stratum-config` | — | Config schema, TOML load/save, inotify watcher |
 | `stratum-ipc` | — | Unix socket IPC (JSON pub/sub) |
-| `stratum-shell` | `stratum-shell` | Panel + launcher *(Phase 3/4)* |
+| `stratum-shell` | `stratum-shell` | Bottom panel + app launcher overlay |
 | `stratum-settings` | `stratum-settings` | GUI settings app *(Phase 6)* |
 | `stratum-session` | `stratum-session` | Autostart runner *(Phase 1 stub)* |
 
