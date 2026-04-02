@@ -1,0 +1,34 @@
+# Maintainer: stratum-de contributors
+pkgname=stratum-de
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Stratum Desktop Environment — Rust-based DE on the River Wayland compositor'
+arch=('x86_64')
+url='https://github.com/randomperson247365/Stratum-Pro-Plus-XL-Super-Pro-Max-Ultra-Mega-Deluxe-Ultimate-Edition'
+license=('MIT')
+depends=('river' 'libxkbcommon' 'wayland')
+makedepends=('rust' 'cargo')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/heads/main.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir"/Stratum-Pro-Plus-*
+    cargo build --release --locked
+}
+
+package() {
+    cd "$srcdir"/Stratum-Pro-Plus-*
+
+    install -Dm755 target/release/stratum-wm       "$pkgdir/usr/bin/stratum-wm"
+    install -Dm755 target/release/stratum-shell    "$pkgdir/usr/bin/stratum-shell"
+    install -Dm755 target/release/stratum-settings "$pkgdir/usr/bin/stratum-settings"
+    install -Dm755 contrib/river-init              "$pkgdir/usr/bin/stratum-river-init"
+
+    install -Dm644 data/stratum.desktop \
+        "$pkgdir/usr/share/wayland-sessions/stratum.desktop"
+    install -Dm644 data/stratum-settings.desktop \
+        "$pkgdir/usr/share/applications/stratum-settings.desktop"
+
+    install -Dm644 data/default-config.toml \
+        "$pkgdir/etc/stratum/config.toml"
+}
