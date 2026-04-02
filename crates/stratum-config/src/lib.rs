@@ -15,6 +15,8 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
     #[error("failed to parse config: {0}")]
     Parse(#[from] toml::de::Error),
+    #[error("failed to serialize config: {0}")]
+    Serialize(#[from] toml::ser::Error),
 }
 
 /// Load a StratumConfig from the given TOML file.
@@ -26,4 +28,15 @@ pub fn load_config(path: &Path) -> Result<StratumConfig, ConfigError> {
     let text = std::fs::read_to_string(path)?;
     let config: StratumConfig = toml::from_str(&text)?;
     Ok(config)
+}
+
+/// Serialize and write a StratumConfig to the given TOML file.
+/// Creates parent directories if they don't exist.
+pub fn save_config(config: &StratumConfig, path: &Path) -> Result<(), ConfigError> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let text = toml::to_string_pretty(config)?;
+    std::fs::write(path, text)?;
+    Ok(())
 }

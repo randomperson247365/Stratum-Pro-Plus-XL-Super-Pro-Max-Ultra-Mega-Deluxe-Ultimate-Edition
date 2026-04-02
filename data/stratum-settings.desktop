@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Stratum Settings
+Comment=Configure the Stratum desktop environment
+Exec=stratum-settings
+Type=Application
+Categories=Settings;DesktopSettings;

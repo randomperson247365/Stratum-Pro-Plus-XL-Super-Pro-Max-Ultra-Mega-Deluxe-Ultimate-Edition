@@ -9,7 +9,7 @@ A desktop environment built in Rust on the [River](https://codeberg.org/river/ri
 - [x] Phase 3 — Shell & Panel (stratum-shell, bottom panel, clock/battery/network/window-title widgets, IPC)
 - [x] Phase 4 — App Launcher (XDG .desktop scanner, fuzzy search, full-screen overlay via Super+Space)
 - [x] Phase 5 — Tiling Mode (master/stack layout, Super+T toggle, gaps from config)
-- [ ] Phase 6 — Settings App (Iced GUI, panel editor, keybind remapping)
+- [x] Phase 6 — Settings App (Iced GUI: Appearance / Decorations / Keybindings tabs, TOML save)
 - [ ] Phase 7 — Polish & Ship (animations, AUR PKGBUILD, Nix flake)
 
 ---
@@ -40,6 +40,8 @@ Run these after building:
 ```bash
 sudo install -Dm755 target/release/stratum-wm        /usr/local/bin/stratum-wm
 sudo install -Dm755 target/release/stratum-shell     /usr/local/bin/stratum-shell
+sudo install -Dm755 target/release/stratum-settings  /usr/local/bin/stratum-settings
+sudo install -Dm644 data/stratum-settings.desktop    /usr/share/applications/stratum-settings.desktop
 sudo install -Dm755 contrib/river-init               /usr/local/bin/stratum-river-init
 sudo install -Dm644 data/stratum.desktop             /usr/share/wayland-sessions/stratum.desktop
 sudo install -Dm644 data/default-config.toml         /etc/stratum/config.toml
@@ -172,6 +174,26 @@ buttons             = ["minimize", "maximize", "close"]
 | `stratum-shell` | `stratum-shell` | Bottom panel + app launcher overlay |
 | `stratum-settings` | `stratum-settings` | GUI settings app *(Phase 6)* |
 | `stratum-session` | `stratum-session` | Autostart runner *(Phase 1 stub)* |
+
+---
+
+## Settings App
+
+Launch `stratum-settings` from the app launcher (`Super+Space` → "Stratum Settings")
+or run it directly.
+
+It edits `~/.config/stratum/config.toml` directly. stratum-wm picks up the saved
+file automatically via inotify hot-reload — no restart needed.
+
+**Tabs:**
+
+| Tab | What you can change |
+|-----|---------------------|
+| Appearance | Accent colour, dark/light theme, gap sizes, UI/mono fonts |
+| Decorations | Titlebar height, border widths, corner radius, shadow |
+| Keybindings | Add / remove / remap any `super+key → action` binding |
+
+Click **Save** to write the file; click **Reset** to reload from disk.
 
 ---
 
