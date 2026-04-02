@@ -1,5 +1,7 @@
 # Stratum Pro Plus XL Super Pro Max Ultra Mega Deluxe Ultimate Edition
 
+# I have no idea if this even works this is just to show that if an AI can build a working desktop environment with this anyone can 
+
 A desktop environment built in Rust on the [River](https://codeberg.org/river/river) Wayland compositor. River handles all rendering; Stratum handles window management policy, decorations, the panel, launcher, and settings.
 
 ## Phase Status
