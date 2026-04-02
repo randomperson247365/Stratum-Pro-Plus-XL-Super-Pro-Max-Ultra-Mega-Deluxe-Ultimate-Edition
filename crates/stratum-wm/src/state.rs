@@ -323,7 +323,6 @@ impl AppState {
                     let tile = if use_deck_fallback { tiles[focused_idx] } else { tiles[i] };
 
                     if let Some(win) = self.windows.get(win_id) {
-                        let node = win.proxy.get_node(qh, ());
                         let (px, py) = if let Some(anim) = self.animations.get_mut(win_id) {
                             anim.set_target(tile.x, tile.y);
                             let pos = anim.current_pos();
@@ -332,7 +331,9 @@ impl AppState {
                         } else {
                             (tile.x, tile.y)
                         };
-                        node.set_position(px, py);
+                        if let Some(node) = &win.node {
+                            node.set_position(px, py);
+                        }
 
                         // Borders only — no titlebars in tiling mode.
                         let (bw, br, bg, bb) = if *is_active {
@@ -373,7 +374,6 @@ impl AppState {
 
                     // Position the window node, applying slide-in animation if active.
                     if let Some(win) = self.windows.get(&win_id) {
-                        let node = win.proxy.get_node(qh, ());
                         let tx = if win_x == 0 { (ow - win_w).max(0) / 2 } else { win_x };
                         let ty = if win_y == 0 { (oh - win_w).max(0) / 2 } else { win_y };
                         let (x, y) = if let Some(anim) = self.animations.get_mut(&win_id) {
@@ -384,7 +384,9 @@ impl AppState {
                         } else {
                             (tx, ty)
                         };
-                        node.set_position(x, y);
+                        if let Some(node) = &win.node {
+                            node.set_position(x, y);
+                        }
 
                         // Protocol borders (compositor-drawn; free).
                         if !fullscreen {
@@ -561,7 +563,12 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
             }
             river_window_manager_v1::Event::Window { id } => {
                 let win_id = Self::obj_id(&id);
-                state.windows.insert(win_id, WindowState::new(id.clone()));
+                // get_node MUST be called exactly once per window (protocol error otherwise).
+                // Create and store the node immediately so the render path never calls it again.
+                let node = id.get_node(qh, ());
+                let mut win_state = WindowState::new(id.clone());
+                win_state.node = Some(node);
+                state.windows.insert(win_id, win_state);
                 state.focus_stack.push(win_id);
                 state.layout_dirty = true;
 

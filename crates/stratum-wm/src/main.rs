@@ -28,16 +28,22 @@ fn main() -> anyhow::Result<()> {
         .build()
         .expect("stratum-wm: failed to build tokio runtime");
 
-    // Bind the IPC socket and get a broadcast sender.
-    let ipc_tx = match IpcServer::bind() {
-        Ok(server) => {
-            let tx = server.tx.clone();
-            rt.spawn(server.run());
-            Some(tx)
-        }
-        Err(e) => {
-            eprintln!("stratum-wm: IPC server bind failed: {e} — shell features disabled");
-            None
+    // Bind the IPC socket inside the runtime context.
+    // tokio::net::UnixListener::bind registers with the I/O driver and
+    // requires an active runtime — enter it first, then drop the guard so
+    // the Wayland event loop runs on the main thread without tokio overhead.
+    let ipc_tx = {
+        let _guard = rt.enter();
+        match IpcServer::bind() {
+            Ok(server) => {
+                let tx = server.tx.clone();
+                rt.spawn(server.run());
+                Some(tx)
+            }
+            Err(e) => {
+                eprintln!("stratum-wm: IPC server bind failed: {e} — shell features disabled");
+                None
+            }
         }
     };
 
