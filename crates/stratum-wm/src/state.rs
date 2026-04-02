@@ -13,6 +13,7 @@ use stratum_ipc::IpcMessage;
 use tokio::sync::broadcast;
 
 use crate::{
+    animation::WindowAnimation,
     decorations::{self, TitlebarRenderer, WindowDecoration},
     decorations::renderer::parse_hex_to_rgb,
     keybinds::{execute_action, parse_keybind, ActionContext},
@@ -73,6 +74,8 @@ pub struct AppState {
     pub ipc_tx:            Option<broadcast::Sender<IpcMessage>>,
     // Phase 5 — tiling
     pub tiling_enabled:    bool,
+    // Phase 7 — animations
+    pub animations:        HashMap<u64, WindowAnimation>,
 }
 
 impl AppState {
@@ -93,6 +96,7 @@ impl AppState {
             font_renderer:     TitlebarRenderer::new(),
             ipc_tx:            None,
             tiling_enabled:    false,
+            animations:        HashMap::new(),
         }
     }
 
@@ -280,7 +284,15 @@ impl AppState {
             for ((win_id, is_active), tile) in snap.iter().zip(tiles.iter()) {
                 if let Some(win) = self.windows.get(win_id) {
                     let node = win.proxy.get_node(qh, ());
-                    node.set_position(tile.x, tile.y);
+                    let (px, py) = if let Some(anim) = self.animations.get_mut(win_id) {
+                        anim.set_target(tile.x, tile.y);
+                        let pos = anim.current_pos();
+                        if anim.is_done() { self.animations.remove(win_id); }
+                        pos
+                    } else {
+                        (tile.x, tile.y)
+                    };
+                    node.set_position(px, py);
 
                     // Borders only — no titlebars in tiling mode.
                     let (bw, br, bg, bb) = if *is_active {
@@ -318,11 +330,19 @@ impl AppState {
                     continue;
                 }
 
-                // Position the window node.
+                // Position the window node, applying slide-in animation if active.
                 if let Some(win) = self.windows.get(&win_id) {
                     let node = win.proxy.get_node(qh, ());
-                    let x = if win_x == 0 { (ow - win_w).max(0) / 2 } else { win_x };
-                    let y = if win_y == 0 { (oh - win_w).max(0) / 2 } else { win_y };
+                    let tx = if win_x == 0 { (ow - win_w).max(0) / 2 } else { win_x };
+                    let ty = if win_y == 0 { (oh - win_w).max(0) / 2 } else { win_y };
+                    let (x, y) = if let Some(anim) = self.animations.get_mut(&win_id) {
+                        anim.set_target(tx, ty);
+                        let pos = anim.current_pos();
+                        if anim.is_done() { self.animations.remove(&win_id); }
+                        pos
+                    } else {
+                        (tx, ty)
+                    };
                     node.set_position(x, y);
 
                     // Protocol borders (compositor-drawn; free).
@@ -393,6 +413,7 @@ impl AppState {
     }
 
     pub fn remove_window(&mut self, window_id: u64) {
+        self.animations.remove(&window_id);
         // Clean up decoration surface before dropping the window.
         if let Some(deco) = self.decorations.remove(&window_id) {
             self.surface_to_window
@@ -501,6 +522,11 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                 state.windows.insert(win_id, WindowState::new(id.clone()));
                 state.focus_stack.push(win_id);
                 state.layout_dirty = true;
+
+                // Slide-in animation: start off the bottom of the output.
+                let screen_h = state.outputs.values().next()
+                    .map(|o| o.height as i32).unwrap_or(1080);
+                state.animations.insert(win_id, WindowAnimation::new(screen_h, 0, 0));
 
                 // Create a titlebar decoration surface for this window.
                 if let (Some(comp), Some(shm)) = (

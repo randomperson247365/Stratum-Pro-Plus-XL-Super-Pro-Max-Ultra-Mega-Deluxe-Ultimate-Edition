@@ -12,7 +12,7 @@ A desktop environment built in Rust on the [River](https://codeberg.org/river/ri
 - [x] Phase 4 — App Launcher (XDG .desktop scanner, fuzzy search, full-screen overlay via Super+Space)
 - [x] Phase 5 — Tiling Mode (master/stack layout, Super+T toggle, gaps from config)
 - [x] Phase 6 — Settings App (Iced GUI: Appearance / Decorations / Keybindings tabs, TOML save)
-- [ ] Phase 7 — Polish & Ship (animations, AUR PKGBUILD, Nix flake)
+- [x] Phase 7 — Polish & Ship (window slide-in animations, AUR PKGBUILD, Nix flake)
 
 ---
 
@@ -176,6 +176,39 @@ buttons             = ["minimize", "maximize", "close"]
 | `stratum-shell` | `stratum-shell` | Bottom panel + app launcher overlay |
 | `stratum-settings` | `stratum-settings` | GUI settings app *(Phase 6)* |
 | `stratum-session` | `stratum-session` | Autostart runner *(Phase 1 stub)* |
+
+---
+
+## Packaging
+
+### Arch Linux / CachyOS (AUR)
+
+```bash
+git clone https://github.com/randomperson247365/Stratum-Pro-Plus-XL-Super-Pro-Max-Ultra-Mega-Deluxe-Ultimate-Edition
+cd Stratum-Pro-Plus-XL-Super-Pro-Max-Ultra-Mega-Deluxe-Ultimate-Edition/pkg
+makepkg -si
+```
+
+Or install via an AUR helper once the package is published:
+```bash
+paru -S stratum-de
+```
+
+### Nix / NixOS
+
+```bash
+# Run without installing
+nix run github:randomperson247365/Stratum-Pro-Plus-XL-Super-Pro-Max-Ultra-Mega-Deluxe-Ultimate-Edition#stratum-wm
+
+# Enter development shell
+nix develop github:randomperson247365/Stratum-Pro-Plus-XL-Super-Pro-Max-Ultra-Mega-Deluxe-Ultimate-Edition
+```
+
+Add to a NixOS flake:
+```nix
+inputs.stratum-de.url = "github:randomperson247365/Stratum-Pro-Plus-XL-Super-Pro-Max-Ultra-Mega-Deluxe-Ultimate-Edition";
+environment.systemPackages = [ inputs.stratum-de.packages.${system}.default ];
+```
 
 ---
 
