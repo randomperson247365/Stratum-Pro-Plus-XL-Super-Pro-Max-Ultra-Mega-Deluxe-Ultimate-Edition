@@ -103,4 +103,5 @@ pub use river_xkb_bindings_v1::river_xkb_bindings_v1::RiverXkbBindingsV1;
 pub use river_xkb_bindings_v1::river_xkb_binding_v1::RiverXkbBindingV1;
 pub use river_layer_shell_v1::river_layer_shell_v1::RiverLayerShellV1;
 pub use river_input_management_v1::river_input_manager_v1::RiverInputManagerV1;
+pub use river_input_management_v1::river_input_device_v1::RiverInputDeviceV1;
 pub use river_libinput_config_v1::river_libinput_config_v1::RiverLibinputConfigV1;

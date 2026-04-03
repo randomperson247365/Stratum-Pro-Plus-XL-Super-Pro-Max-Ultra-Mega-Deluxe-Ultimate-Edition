@@ -3,18 +3,8 @@
 #
 # River v0.4.0+ is a framework compositor: all window management policy is
 # implemented by the stratum-wm client via the river-window-management-v1
-# Wayland protocol.  riverctl no longer exists in this version of River;
-# compositor-level settings (keyboard repeat, input devices, VT switching)
-# are either handled internally by River or configured via the input
-# management protocols inside stratum-wm.
+# Wayland protocol.
 
-# ── Launch stratum-wm ────────────────────────────────────────────────────────
-# stratum-wm connects to River, registers as the window manager, and handles:
-#   - floating / master-stack / BSP layout
-#   - server-side decorations and titlebars
-#   - keybinding dispatch (from ~/.config/stratum/config.toml)
-#   - IPC for stratum-shell
+# Launch stratum-wm (window manager) and stratum-shell (panel).
 stratum-wm &
-
-# ── Launch stratum-shell (panel + launcher) ──────────────────────────────────
 stratum-shell &
