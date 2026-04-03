@@ -9,6 +9,7 @@ pub struct StratumConfig {
     pub general:      GeneralConfig,
     pub appearance:   AppearanceConfig,
     pub decorations:  DecorationsConfig,
+    pub layout:       LayoutConfig,
     pub keybindings:  KeybindingsConfig,
     pub launcher:     LauncherConfig,
     pub panels:       Vec<PanelConfig>,
@@ -82,6 +83,35 @@ impl Default for DecorationsConfig {
             shadow_opacity:        0.4,
             buttons_position:      "right".into(),
             buttons:               vec!["minimize".into(), "maximize".into(), "close".into()],
+        }
+    }
+}
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+
+/// Layout policy settings.
+///
+/// `default_mode` is one of `"floating"`, `"master_stack"`, or `"bsp"`.
+///
+/// `min_tile_width` / `min_tile_height` are the pixel thresholds (at 96 dpi) below
+/// which the tiled layout automatically falls back to a deck arrangement.  When the
+/// display reports its physical dimensions via `wl_output::Event::Geometry`, these
+/// thresholds are scaled proportionally so a tile that is "too small to read" has
+/// the same physical footprint regardless of pixel density.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayoutConfig {
+    pub default_mode:    String,
+    pub min_tile_width:  u32,
+    pub min_tile_height: u32,
+}
+
+impl Default for LayoutConfig {
+    fn default() -> Self {
+        Self {
+            default_mode:    "floating".into(),
+            min_tile_width:  400,
+            min_tile_height: 280,
         }
     }
 }
