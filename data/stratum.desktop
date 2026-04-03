@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Stratum
 Comment=Stratum Desktop Environment (River)
-Exec=river -init /usr/local/bin/stratum-river-init
+Exec=river -c /usr/local/bin/stratum-river-init
 Type=Application
 DesktopNames=Stratum
