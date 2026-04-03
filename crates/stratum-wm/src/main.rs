@@ -8,7 +8,7 @@ mod seat;
 mod state;
 mod window;
 
-use stratum_config::{default_config_path, load_config};
+use stratum_config::{default_config_path, load_config, save_config, schema::StratumConfig};
 use stratum_ipc::IpcServer;
 use wayland_client::Connection;
 
@@ -17,6 +17,18 @@ use state::AppState;
 fn main() -> anyhow::Result<()> {
     // Load config (falls back to defaults if absent or unparseable).
     let config_path = default_config_path();
+
+    // Bootstrap a default config file on first run so the file watcher has a
+    // target and the user has a starting point to customise.
+    if !config_path.exists() {
+        if let Some(dir) = config_path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = save_config(&StratumConfig::default(), &config_path) {
+            eprintln!("stratum-wm: could not write default config: {e}");
+        }
+    }
+
     let config = load_config(&config_path).unwrap_or_default();
 
     // Start the inotify config watcher in a background thread.

@@ -3529,6 +3529,7 @@ dependencies = [
  "stratum-config",
  "stratum-ipc",
  "tokio",
+ "wayland-client",
 ]
 
 [[package]]

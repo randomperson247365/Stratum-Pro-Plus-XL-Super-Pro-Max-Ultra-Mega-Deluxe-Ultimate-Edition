@@ -9,6 +9,7 @@ stratum-ipc     = { path = "../stratum-ipc" }
 
 iced            = { version = "0.13", features = ["tokio"] }
 iced_layershell = "0.8"
+wayland-client  = "0.31"
 
 chrono          = { version = "0.4", default-features = false, features = ["clock"] }
 tokio           = { workspace = true }
