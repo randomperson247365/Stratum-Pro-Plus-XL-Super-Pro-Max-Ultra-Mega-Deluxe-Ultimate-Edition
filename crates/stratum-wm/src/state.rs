@@ -26,10 +26,10 @@ use crate::{
         },
         river_xkb_bindings_v1::{river_xkb_binding_v1, river_xkb_bindings_v1},
         river_layer_shell_v1::river_layer_shell_v1,
-        river_input_management_v1::river_input_manager_v1,
+        river_input_management_v1::{river_input_device_v1, river_input_manager_v1},
         river_libinput_config_v1::river_libinput_config_v1,
-        RiverDecorationV1, RiverInputManagerV1, RiverLayerShellV1, RiverLibinputConfigV1,
-        RiverNodeV1, RiverOutputV1, RiverSeatV1, RiverWindowManagerV1,
+        RiverDecorationV1, RiverInputDeviceV1, RiverInputManagerV1, RiverLayerShellV1,
+        RiverLibinputConfigV1, RiverNodeV1, RiverOutputV1, RiverSeatV1, RiverWindowManagerV1,
         RiverWindowV1, RiverXkbBindingsV1, RiverXkbBindingV1,
     },
     seat::{RegisteredKeybind, SeatState},
@@ -880,6 +880,15 @@ impl Dispatch<RiverInputManagerV1, ()> for AppState {
     fn event(
         _: &mut Self, _: &RiverInputManagerV1,
         _: river_input_manager_v1::Event,
+        _: &(), _: &Connection, _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<RiverInputDeviceV1, ()> for AppState {
+    fn event(
+        _: &mut Self, _: &RiverInputDeviceV1,
+        _: river_input_device_v1::Event,
         _: &(), _: &Connection, _: &QueueHandle<Self>,
     ) {
     }
