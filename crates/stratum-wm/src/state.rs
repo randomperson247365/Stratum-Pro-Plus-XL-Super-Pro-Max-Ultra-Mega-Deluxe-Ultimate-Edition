@@ -639,6 +639,15 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
             _ => {}
         }
     }
+
+    wayland_client::event_created_child!(AppState, RiverWindowManagerV1, [
+        // opcode 6 = window  → river_window_v1
+        // opcode 7 = output  → river_output_v1
+        // opcode 8 = seat    → river_seat_v1
+        6 => (RiverWindowV1, ()),
+        7 => (RiverOutputV1, ()),
+        8 => (RiverSeatV1, ()),
+    ]);
 }
 
 // ── RiverWindowV1 ────────────────────────────────────────────────────────────
@@ -883,6 +892,11 @@ impl Dispatch<RiverInputManagerV1, ()> for AppState {
         _: &(), _: &Connection, _: &QueueHandle<Self>,
     ) {
     }
+
+    wayland_client::event_created_child!(AppState, RiverInputManagerV1, [
+        // opcode 1 = input_device event → creates river_input_device_v1
+        1 => (RiverInputDeviceV1, ())
+    ]);
 }
 
 impl Dispatch<RiverInputDeviceV1, ()> for AppState {
