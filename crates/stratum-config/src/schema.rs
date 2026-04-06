@@ -75,8 +75,8 @@ impl Default for DecorationsConfig {
     fn default() -> Self {
         Self {
             titlebar_height:       28,
-            border_width_active:   2,
-            border_width_inactive: 1,
+            border_width_active:   4,
+            border_width_inactive: 2,
             border_radius:         8,
             shadow_enabled:        true,
             shadow_spread:         12,
