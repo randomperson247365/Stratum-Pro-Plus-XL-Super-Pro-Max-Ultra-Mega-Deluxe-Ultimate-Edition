@@ -80,6 +80,11 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: StratumConfig) -> Self {
+        let layout_mode = match config.layout.default_mode.as_str() {
+            "master_stack" => LayoutMode::MasterStack,
+            "bsp"          => LayoutMode::Bsp,
+            _              => LayoutMode::Floating,
+        };
         Self {
             globals:           Globals::default(),
             windows:           HashMap::new(),
@@ -95,7 +100,7 @@ impl AppState {
             surface_to_window: HashMap::new(),
             font_renderer:     TitlebarRenderer::new(),
             ipc_tx:            None,
-            layout_mode:       LayoutMode::Floating,
+            layout_mode,
             animations:        HashMap::new(),
         }
     }
@@ -186,10 +191,11 @@ impl AppState {
             }
         }
 
-        if self.layout_dirty {
-            self.layout_dirty = false;
-            self.apply_floating_layout_manage();
-        }
+        // Always re-send window states in every manage sequence. River requires
+        // show()/propose_dimensions() to be called for each window in every
+        // manage_start; skipping them may cause windows to be hidden.
+        self.layout_dirty = false;
+        self.apply_floating_layout_manage();
 
         // ── Apply deferred per-window manage-sequence informs ─────────────────
         // These requests (inform_fullscreen, inform_maximized, inform_resize_start)
@@ -227,6 +233,30 @@ impl AppState {
         }
     }
 
+    /// Output size minus space reserved by panels (bottom bars, etc.).
+    fn usable_output_size(&self) -> (i32, i32) {
+        let (ow, oh) = self.outputs.values().next()
+            .map(|o| (o.width as i32, o.height as i32))
+            .unwrap_or((1920, 1080));
+        // Subtract height of each configured panel.
+        use stratum_config::PanelPosition;
+        let mut reserved_bottom = 0i32;
+        let mut reserved_top    = 0i32;
+        for p in &self.config.panels {
+            match p.position {
+                PanelPosition::Bottom => reserved_bottom += p.height as i32,
+                PanelPosition::Top    => reserved_top    += p.height as i32,
+                _ => {}
+            }
+        }
+        // If no panels are configured at all, assume a 40 px bottom bar
+        // (stratum-shell's default) so windows don't overlap it.
+        if self.config.panels.is_empty() {
+            reserved_bottom = 40;
+        }
+        (ow, (oh - reserved_bottom - reserved_top).max(200))
+    }
+
     /// DPI-aware minimum tile dimensions. Thresholds are configured in pixels at
     /// 96 dpi and scaled proportionally when the display reports its physical size.
     fn min_tile_size(&self) -> (i32, i32) {
@@ -246,12 +276,7 @@ impl AppState {
     }
 
     fn apply_floating_layout_manage(&self) {
-        let (ow, oh) = self
-            .outputs
-            .values()
-            .next()
-            .map(|o| (o.width as i32, o.height as i32))
-            .unwrap_or((1920, 1080));
+        let (ow, oh) = self.usable_output_size();
 
         match self.layout_mode {
             LayoutMode::MasterStack | LayoutMode::Bsp => {
@@ -275,12 +300,13 @@ impl AppState {
 
                 for (win_id, tile) in visible.iter().zip(tiles.iter()) {
                     if let Some(win) = self.windows.get(win_id) {
-                        win.proxy.show();
+                        // propose_dimensions BEFORE show per protocol.
                         win.proxy.propose_dimensions(tile.width, tile.height);
+                        win.proxy.show();
                         win.proxy.use_ssd();
                     }
                 }
-                // Hide minimized windows.
+                // Hide minimized windows and fullscreen windows not in the tile list.
                 for win in self.windows.values() {
                     if win.minimized {
                         win.proxy.hide();
@@ -293,10 +319,11 @@ impl AppState {
                         win.proxy.hide();
                         continue;
                     }
-                    win.proxy.show();
                     let w = win.width.max(400).min(ow);
                     let h = win.height.max(300).min(oh);
+                    // propose_dimensions BEFORE show per protocol.
                     win.proxy.propose_dimensions(w, h);
+                    win.proxy.show();
                     win.proxy.use_ssd();
                 }
             }
@@ -304,12 +331,7 @@ impl AppState {
     }
 
     fn apply_floating_layout_render(&mut self, qh: &QueueHandle<Self>) {
-        let (ow, oh) = self
-            .outputs
-            .values()
-            .next()
-            .map(|o| (o.width as i32, o.height as i32))
-            .unwrap_or((1920, 1080));
+        let (ow, oh) = self.usable_output_size();
 
         use crate::protocol::river_window_management_v1::river_window_v1::Edges;
 
@@ -386,26 +408,27 @@ impl AppState {
                 // ── Floating render path ────────────────────────────────────
                 // Snapshot per-window data to avoid holding a borrow on self.windows
                 // while also mutably borrowing self.decorations later in the loop.
-                let window_data: Vec<(u64, i32, i32, i32, i32, bool, bool, bool, String)> = self
+                let window_data: Vec<(u64, i32, i32, i32, i32, i32, bool, bool, bool, String)> = self
                     .windows
                     .iter()
                     .map(|(id, win)| {
                         let is_active = self.focused_window == Some(*id);
-                        let actual_w = if win.actual_width > 0 { win.actual_width } else { win.width };
+                        let actual_w = if win.actual_width  > 0 { win.actual_width  } else { win.width  };
+                        let actual_h = if win.actual_height > 0 { win.actual_height } else { win.height };
                         let title = win.display_title().to_owned();
-                        (*id, win.x, win.y, win.width, actual_w, win.minimized, win.fullscreen, is_active, title)
+                        (*id, win.x, win.y, actual_w, actual_h, win.width, win.minimized, win.fullscreen, is_active, title)
                     })
                     .collect();
 
-                for (win_id, win_x, win_y, win_w, actual_w, minimized, fullscreen, is_active, title) in window_data {
+                for (win_id, win_x, win_y, actual_w, actual_h, win_w, minimized, fullscreen, is_active, title) in window_data {
                     if minimized {
                         continue;
                     }
 
                     // Position the window node, applying slide-in animation if active.
                     if let Some(win) = self.windows.get(&win_id) {
-                        let tx = if win_x == 0 { (ow - win_w).max(0) / 2 } else { win_x };
-                        let ty = if win_y == 0 { (oh - win_w).max(0) / 2 } else { win_y };
+                        let tx = if win_x == 0 { (ow - actual_w).max(0) / 2 } else { win_x };
+                        let ty = if win_y == 0 { (oh - actual_h).max(0) / 2 } else { win_y };
                         let (x, y) = if let Some(anim) = self.animations.get_mut(&win_id) {
                             anim.set_target(tx, ty);
                             let pos = anim.current_pos();
