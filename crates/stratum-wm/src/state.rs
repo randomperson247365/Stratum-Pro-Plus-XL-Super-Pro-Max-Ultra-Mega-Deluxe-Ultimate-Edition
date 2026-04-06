@@ -319,12 +319,13 @@ impl AppState {
                         win.proxy.hide();
                         continue;
                     }
-                    let w = win.width.max(400).min(ow);
-                    let h = win.height.max(300).min(oh);
-                    // propose_dimensions BEFORE show per protocol.
-                    win.proxy.propose_dimensions(w, h);
-                    win.proxy.show();
+                    // In floating mode let the application choose its own size.
+                    // Proposing fixed dimensions overrides the app's preferred
+                    // size and causes it to fill the output when River uses the
+                    // output size as the default configure. We position it
+                    // centered in the render sequence once we know actual_width.
                     win.proxy.use_ssd();
+                    win.proxy.show();
                 }
             }
         }
