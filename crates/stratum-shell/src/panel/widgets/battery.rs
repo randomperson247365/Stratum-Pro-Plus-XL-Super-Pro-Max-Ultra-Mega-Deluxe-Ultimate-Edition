@@ -3,27 +3,46 @@ use iced::Element;
 
 use crate::app::Message;
 
-/// Reads /sys/class/power_supply/BAT0/capacity (0-100) and returns a label.
-/// Returns None if no battery is present.
-fn read_capacity() -> Option<u8> {
-    std::fs::read_to_string("/sys/class/power_supply/BAT0/capacity")
-        .ok()
-        .and_then(|s| s.trim().parse::<u8>().ok())
+struct BatteryInfo {
+    capacity: u8,
+    charging: bool,
+}
+
+/// Scans /sys/class/power_supply/ for the first BAT* entry.
+fn read_battery() -> Option<BatteryInfo> {
+    let dir = std::fs::read_dir("/sys/class/power_supply").ok()?;
+    for entry in dir.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with("BAT") {
+            continue;
+        }
+        let base = entry.path();
+        let capacity = std::fs::read_to_string(base.join("capacity"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())?;
+        let charging = std::fs::read_to_string(base.join("status"))
+            .map(|s| s.trim() == "Charging")
+            .unwrap_or(false);
+        return Some(BatteryInfo { capacity, charging });
+    }
+    None
 }
 
 pub fn view<'a>() -> Element<'a, Message> {
-    let label = match read_capacity() {
-        Some(pct) => {
-            let icon = if pct > 80 {
+    let label = match read_battery() {
+        Some(b) => {
+            let icon = if b.charging {
+                "󰂄"
+            } else if b.capacity > 80 {
                 ""
-            } else if pct > 50 {
+            } else if b.capacity > 50 {
                 ""
-            } else if pct > 20 {
+            } else if b.capacity > 20 {
                 ""
             } else {
                 ""
             };
-            format!("{icon} {pct}%")
+            format!("{icon} {}%", b.capacity)
         }
         None => String::new(), // no battery — show nothing
     };

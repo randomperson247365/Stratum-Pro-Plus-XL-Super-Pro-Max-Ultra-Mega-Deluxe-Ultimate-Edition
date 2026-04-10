@@ -34,11 +34,15 @@ impl OutputState {
     /// Returns `None` for virtual displays (physical mm == 0) or when the geometry
     /// event has not arrived yet.
     pub fn dpi(&self) -> Option<f32> {
+        if self.width == 0 || self.height == 0 {
+            return None; // headless / not-yet-configured output
+        }
         let pw = self.physical_width_mm.filter(|&v| v > 0)?;
         let ph = self.physical_height_mm.filter(|&v| v > 0)?;
         let px_diag = ((self.width  as f32).powi(2)
                      + (self.height as f32).powi(2)).sqrt();
         let mm_diag = ((pw as f32).powi(2) + (ph as f32).powi(2)).sqrt();
+        // mm_diag > 0 guaranteed since pw > 0 and ph > 0.
         Some(px_diag / (mm_diag / 25.4))
     }
 }

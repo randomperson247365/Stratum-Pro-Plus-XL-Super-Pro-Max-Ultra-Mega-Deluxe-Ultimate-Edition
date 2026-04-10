@@ -329,11 +329,15 @@ impl AppState {
                         win.proxy.hide();
                         continue;
                     }
-                    // In floating mode let the application choose its own size.
-                    // Proposing fixed dimensions overrides the app's preferred
-                    // size and causes it to fill the output when River uses the
-                    // output size as the default configure. We position it
-                    // centered in the render sequence once we know actual_width.
+                    // Propose a sensible default size for new windows only
+                    // (actual_width == 0 means River hasn't configured them yet).
+                    // Without this, River uses the full output size as the default
+                    // configure and apps like foot open fullscreen.
+                    // For windows that already reported their size, skip proposing
+                    // so they keep their current dimensions across manage cycles.
+                    if win.actual_width == 0 {
+                        win.proxy.propose_dimensions(win.width, win.height);
+                    }
                     win.proxy.use_ssd();
                     win.proxy.show();
                 }
@@ -559,6 +563,14 @@ impl AppState {
             self.focused_window = self.focus_stack.first().copied();
             if let Some(next_id) = self.focused_window {
                 self.set_focus(next_id);
+            } else {
+                // No windows left — clear panel title so it shows "Desktop".
+                if let Some(tx) = &self.ipc_tx {
+                    let _ = tx.send(IpcMessage::FocusChanged {
+                        app_id: String::new(),
+                        title:  String::new(),
+                    });
+                }
             }
         }
     }

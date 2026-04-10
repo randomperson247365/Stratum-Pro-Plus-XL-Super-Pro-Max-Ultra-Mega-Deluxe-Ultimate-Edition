@@ -181,8 +181,14 @@ impl TitlebarRenderer {
 
             for row in 0..metrics.height {
                 for col in 0..metrics.width {
-                    let px = (cursor_x as i32 + col as i32 + metrics.xmin) as u32;
-                    let py = (y_offset + row as i32) as u32;
+                    // Keep coords signed — negative values mean off-screen left/top.
+                    let px_i = cursor_x as i32 + col as i32 + metrics.xmin;
+                    let py_i = y_offset + row as i32;
+                    if px_i < 0 || py_i < 0 {
+                        continue;
+                    }
+                    let px = px_i as u32;
+                    let py = py_i as u32;
                     if px >= pw || py >= ph {
                         continue;
                     }
