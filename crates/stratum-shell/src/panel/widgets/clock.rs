@@ -6,7 +6,8 @@ use crate::app::Message;
 
 pub fn view<'a>() -> Element<'a, Message> {
     let now = Local::now();
-    text(now.format("%a %b %-d  %H:%M").to_string())
+    // Format includes seconds so the 1-second tick keeps display accurate.
+    text(now.format("%a %b %-d  %H:%M:%S").to_string())
         .size(13)
         .into()
 }

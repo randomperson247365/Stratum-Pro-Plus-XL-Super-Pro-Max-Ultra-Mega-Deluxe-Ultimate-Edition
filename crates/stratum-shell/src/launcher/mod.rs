@@ -2,6 +2,8 @@ pub mod view;
 
 use std::path::PathBuf;
 
+pub const MAX_LAUNCHER_RESULTS: usize = 8;
+
 // ── App entry ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -123,7 +125,7 @@ fn strip_field_codes(exec: &str) -> String {
 /// Returns up to 8 entries matching `query`, ranked by match quality.
 pub fn fuzzy_filter<'a>(apps: &'a [AppEntry], query: &str) -> Vec<&'a AppEntry> {
     if query.is_empty() {
-        return apps.iter().take(8).collect();
+        return apps.iter().take(MAX_LAUNCHER_RESULTS).collect();
     }
 
     let q = query.to_lowercase();
@@ -147,5 +149,5 @@ pub fn fuzzy_filter<'a>(apps: &'a [AppEntry], query: &str) -> Vec<&'a AppEntry> 
         .collect();
 
     scored.sort_by_key(|(score, _)| *score);
-    scored.into_iter().take(8).map(|(_, app)| app).collect()
+    scored.into_iter().take(MAX_LAUNCHER_RESULTS).map(|(_, app)| app).collect()
 }

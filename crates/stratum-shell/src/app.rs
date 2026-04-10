@@ -20,6 +20,7 @@ pub enum Message {
     /// Incoming IPC event from stratum-wm.
     IpcEvent(IpcMessage),
     // Launcher
+    OpenLauncher,
     QueryChanged(String),
     Launch(String),   // exec string
     CloseLauncher,
@@ -69,7 +70,7 @@ impl Application for ShellApp {
 
     fn new(_flags: ()) -> (Self, Task<Message>) {
         let all_apps = launcher::load_apps();
-        let filtered_apps = all_apps.iter().take(8).cloned().collect();
+        let filtered_apps = all_apps.iter().take(crate::launcher::MAX_LAUNCHER_RESULTS).cloned().collect();
         (
             Self {
                 focused_title: String::new(),
@@ -96,11 +97,7 @@ impl Application for ShellApp {
                     Task::none()
                 }
                 IpcMessage::OpenLauncher => {
-                    self.launcher_open = true;
-                    self.launcher_query.clear();
-                    self.filtered_apps = self.all_apps.iter().take(8).cloned().collect();
-                    // Resize to fullscreen — routed through TryInto, not update().
-                    Task::done(Message::GoFullscreen)
+                    Task::done(Message::OpenLauncher)
                 }
                 _ => Task::none(),
             },
@@ -121,6 +118,16 @@ impl Application for ShellApp {
                 self.launcher_open = false;
                 self.launcher_query.clear();
                 Task::done(Message::GoPanel)
+            }
+
+            Message::OpenLauncher => {
+                self.launcher_open = true;
+                self.launcher_query.clear();
+                self.filtered_apps = self.all_apps.iter()
+                    .take(crate::launcher::MAX_LAUNCHER_RESULTS)
+                    .cloned()
+                    .collect();
+                Task::done(Message::GoFullscreen)
             }
 
             Message::CloseLauncher => {
@@ -147,7 +154,7 @@ impl Application for ShellApp {
 
     fn subscription(&self) -> Subscription<Message> {
         let ipc = ipc_subscription();
-        let tick = iced::time::every(std::time::Duration::from_secs(30))
+        let tick = iced::time::every(std::time::Duration::from_secs(1))
             .map(|_| Message::Tick);
 
         // Close launcher on Escape.
