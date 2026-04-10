@@ -59,14 +59,20 @@ pub fn compute(
         height: usable_h,
     });
 
-    // Stack
+    // Stack — last tile absorbs integer-division remainder so there's no gap.
     for i in 0..stack_count {
         let tile_y = usable_y + i as i32 * (stack_h + gap_inner);
+        let h = if i == stack_count - 1 {
+            // Remaining height from tile_y to bottom of usable area.
+            (usable_y + usable_h - tile_y).max(1)
+        } else {
+            stack_h
+        };
         tiles.push(TileGeometry {
             x: stack_x,
             y: tile_y,
             width: stack_w,
-            height: stack_h,
+            height: h,
         });
     }
 

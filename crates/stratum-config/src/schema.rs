@@ -98,12 +98,16 @@ impl Default for DecorationsConfig {
 /// display reports its physical dimensions via `wl_output::Event::Geometry`, these
 /// thresholds are scaled proportionally so a tile that is "too small to read" has
 /// the same physical footprint regardless of pixel density.
+///
+/// `split_ratio` controls the BSP split proportion (0.5 = even halves).
+/// Values outside [0.1, 0.9] are clamped at runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LayoutConfig {
     pub default_mode:    String,
     pub min_tile_width:  u32,
     pub min_tile_height: u32,
+    pub split_ratio:     f32,
 }
 
 impl Default for LayoutConfig {
@@ -112,6 +116,7 @@ impl Default for LayoutConfig {
             default_mode:    "floating".into(),
             min_tile_width:  400,
             min_tile_height: 280,
+            split_ratio:     0.5,
         }
     }
 }

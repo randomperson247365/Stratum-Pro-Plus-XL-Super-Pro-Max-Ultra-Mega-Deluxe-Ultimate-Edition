@@ -85,15 +85,16 @@ pub fn update(
 ) {
     // Re-allocate if the window became wider (or on first render with real width).
     if new_width != deco.width {
-        // Destroy old buffer/pool, allocate new ones.
-        deco.buffer.destroy();
-        deco.shm_pool.destroy();
+        // Allocate new pool/buffer before destroying old ones — if alloc fails
+        // the decoration remains in a consistent, usable state at the old size.
         match shm::alloc(wl_shm, qh, new_width, deco.height) {
             Ok((pool, buf, mm)) => {
-                deco.shm_pool = pool;
-                deco.buffer   = buf;
-                deco.mmap     = mm;
-                deco.width    = new_width;
+                let old_buf  = std::mem::replace(&mut deco.buffer,   buf);
+                let old_pool = std::mem::replace(&mut deco.shm_pool, pool);
+                deco.mmap  = mm;
+                deco.width = new_width;
+                old_buf.destroy();
+                old_pool.destroy();
             }
             Err(e) => {
                 eprintln!("stratum-wm: decoration resize failed: {e}");

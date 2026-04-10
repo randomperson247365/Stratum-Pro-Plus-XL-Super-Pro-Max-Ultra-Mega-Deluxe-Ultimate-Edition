@@ -277,6 +277,11 @@ impl AppState {
 
     fn apply_floating_layout_manage(&self) {
         let (ow, oh) = self.usable_output_size();
+        // Raw output dimensions — fullscreen windows must cover the full output,
+        // not just the panel-free usable area.
+        let (raw_ow, raw_oh) = self.outputs.values().next()
+            .map(|o| (o.width as i32, o.height as i32))
+            .unwrap_or((ow, oh));
 
         match self.layout_mode {
             LayoutMode::MasterStack | LayoutMode::Bsp => {
@@ -295,7 +300,7 @@ impl AppState {
                 let gi = self.config.appearance.gap_inner as i32;
                 let tiles = match self.layout_mode {
                     LayoutMode::MasterStack => compute_tiles(visible.len(), ow, oh, go, gi),
-                    _                       => compute_bsp(visible.len(), ow, oh, go, gi),
+                    _                       => compute_bsp(visible.len(), ow, oh, go, gi, self.config.layout.split_ratio),
                 };
 
                 for (win_id, tile) in visible.iter().zip(tiles.iter()) {
@@ -306,10 +311,15 @@ impl AppState {
                         win.proxy.use_ssd();
                     }
                 }
-                // Hide minimized windows and fullscreen windows not in the tile list.
+                // Fullscreen windows: propose full raw output size, not usable area.
+                // Minimized windows: hidden.
                 for win in self.windows.values() {
                     if win.minimized {
                         win.proxy.hide();
+                    } else if win.fullscreen {
+                        win.proxy.propose_dimensions(raw_ow, raw_oh);
+                        win.proxy.show();
+                        win.proxy.use_ssd();
                     }
                 }
             }
@@ -353,7 +363,7 @@ impl AppState {
                 let gi = self.config.appearance.gap_inner as i32;
                 let tiles = match self.layout_mode {
                     LayoutMode::MasterStack => compute_tiles(visible.len(), ow, oh, go, gi),
-                    _                       => compute_bsp(visible.len(), ow, oh, go, gi),
+                    _                       => compute_bsp(visible.len(), ow, oh, go, gi, self.config.layout.split_ratio),
                 };
 
                 // Snapshot to avoid borrow conflicts.
@@ -404,6 +414,23 @@ impl AppState {
                         decorations::detach_titlebar(deco);
                     }
                 }
+
+                // Position fullscreen windows at output origin, no borders.
+                let fullscreen_ids: Vec<u64> = self.focus_stack.iter()
+                    .filter(|id| self.windows.get(id).map(|w| w.fullscreen && !w.minimized).unwrap_or(false))
+                    .copied()
+                    .collect();
+                for win_id in fullscreen_ids {
+                    if let Some(win) = self.windows.get(&win_id) {
+                        if let Some(node) = &win.node {
+                            node.set_position(0, 0);
+                        }
+                        win.proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
+                    }
+                    if let Some(deco) = self.decorations.get(&win_id) {
+                        decorations::detach_titlebar(deco);
+                    }
+                }
             }
             LayoutMode::Floating => {
                 // ── Floating render path ────────────────────────────────────
@@ -428,8 +455,14 @@ impl AppState {
 
                     // Position the window node, applying slide-in animation if active.
                     if let Some(win) = self.windows.get(&win_id) {
-                        let tx = if win_x == 0 { (ow - actual_w).max(0) / 2 } else { win_x };
-                        let ty = if win_y == 0 { (oh - actual_h).max(0) / 2 } else { win_y };
+                        // Fullscreen: always at (0,0) regardless of stored position.
+                        let (tx, ty) = if fullscreen {
+                            (0, 0)
+                        } else {
+                            let tx = if win_x == 0 { (ow - actual_w).max(0) / 2 } else { win_x };
+                            let ty = if win_y == 0 { (oh - actual_h).max(0) / 2 } else { win_y };
+                            (tx, ty)
+                        };
                         let (x, y) = if let Some(anim) = self.animations.get_mut(&win_id) {
                             anim.set_target(tx, ty);
                             let pos = anim.current_pos();
@@ -457,7 +490,7 @@ impl AppState {
                         }
                     }
 
-                    // Update and commit the CPU-rendered titlebar surface.
+                    // Update/commit titlebar, or detach it when fullscreen.
                     if !fullscreen {
                         if let Some(wl_shm) = self.globals.wl_shm.clone() {
                             if let Some(deco) = self.decorations.get_mut(&win_id) {
@@ -468,6 +501,8 @@ impl AppState {
                                 decorations::commit_in_render_sequence(deco);
                             }
                         }
+                    } else if let Some(deco) = self.decorations.get(&win_id) {
+                        decorations::detach_titlebar(deco);
                     }
                 }
             }
@@ -725,12 +760,14 @@ impl Dispatch<RiverWindowV1, ()> for AppState {
             }
             river_window_v1::Event::MaximizeRequested => {
                 if let Some(win) = state.windows.get_mut(&win_id) {
+                    win.maximized = true;
                     win.pending_maximized_inform = Some(true);
                 }
                 state.layout_dirty = true;
             }
             river_window_v1::Event::UnmaximizeRequested => {
                 if let Some(win) = state.windows.get_mut(&win_id) {
+                    win.maximized = false;
                     win.pending_maximized_inform = Some(false);
                 }
                 state.layout_dirty = true;

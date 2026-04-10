@@ -25,6 +25,7 @@ buttons = ["minimize", "maximize", "close"]
 default_mode    = "floating"
 min_tile_width  = 400
 min_tile_height = 280
+split_ratio     = 0.5
 
 [keybindings]
 "super+Return" = "spawn_terminal"
