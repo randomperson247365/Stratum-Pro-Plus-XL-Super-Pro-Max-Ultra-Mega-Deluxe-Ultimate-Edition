@@ -68,7 +68,10 @@ impl TitlebarRenderer {
             pb.quad_to(w as f32, 0.0, w as f32, radius);        // top-right curve
             pb.line_to(w as f32, h as f32);                      // bottom-right
             pb.close();
-            pb.finish().unwrap()
+            match pb.finish() {
+                Some(p) => p,
+                None => return, // degenerate path — nothing to draw
+            }
         };
         pixmap.fill_path(&path, &bg_paint, FillRule::Winding, Transform::identity(), None);
 
@@ -131,7 +134,8 @@ impl TitlebarRenderer {
         let pixels = pixmap.data(); // RGBA8888 in tiny-skia (premultiplied)
         let buf = mmap.as_mut();
         let len = (w * h * 4) as usize;
-        let copy_len = len.min(pixels.len()).min(buf.len());
+        // Round down to multiple of 4 — each pixel is exactly 4 bytes.
+        let copy_len = len.min(pixels.len()).min(buf.len()) & !3;
         // tiny-skia is RGBA; Wayland ARGB8888 is B, G, R, A in memory order.
         for i in (0..copy_len).step_by(4) {
             let r = pixels[i];

@@ -37,18 +37,20 @@ fn bsp_split(out: &mut [TileGeometry], rect: TileGeometry, depth: usize, gap: i3
     let left_count = (out.len() + 1) / 2;
     let (a, b) = if depth % 2 == 0 {
         // Vertical split: left | right
-        let lw = ((rect.width - gap) as f32 * ratio) as i32;
-        let rw = (rect.width - gap - lw).max(1);
+        let avail_w = (rect.width - gap).max(0);
+        let lw = (avail_w as f32 * ratio) as i32;
+        let rw = (avail_w - lw).max(1);
         (
-            TileGeometry { x: rect.x,            y: rect.y, width: lw, height: rect.height },
-            TileGeometry { x: rect.x + lw + gap, y: rect.y, width: rw, height: rect.height },
+            TileGeometry { x: rect.x,            y: rect.y, width: lw.max(1), height: rect.height },
+            TileGeometry { x: rect.x + lw + gap, y: rect.y, width: rw,        height: rect.height },
         )
     } else {
         // Horizontal split: top / bottom
-        let th = ((rect.height - gap) as f32 * ratio) as i32;
-        let bh = (rect.height - gap - th).max(1);
+        let avail_h = (rect.height - gap).max(0);
+        let th = (avail_h as f32 * ratio) as i32;
+        let bh = (avail_h - th).max(1);
         (
-            TileGeometry { x: rect.x, y: rect.y,            width: rect.width, height: th },
+            TileGeometry { x: rect.x, y: rect.y,            width: rect.width, height: th.max(1) },
             TileGeometry { x: rect.x, y: rect.y + th + gap, width: rect.width, height: bh },
         )
     };
