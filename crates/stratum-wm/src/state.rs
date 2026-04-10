@@ -306,10 +306,15 @@ impl AppState {
                         win.proxy.use_ssd();
                     }
                 }
-                // Hide minimized windows and fullscreen windows not in the tile list.
+                // Fullscreen windows: shown at full output size, positioned at origin.
+                // Minimized windows: hidden.
                 for win in self.windows.values() {
                     if win.minimized {
                         win.proxy.hide();
+                    } else if win.fullscreen {
+                        win.proxy.propose_dimensions(ow, oh);
+                        win.proxy.show();
+                        win.proxy.use_ssd();
                     }
                 }
             }
@@ -404,6 +409,23 @@ impl AppState {
                         decorations::detach_titlebar(deco);
                     }
                 }
+
+                // Position fullscreen windows at output origin, no borders.
+                let fullscreen_ids: Vec<u64> = self.focus_stack.iter()
+                    .filter(|id| self.windows.get(id).map(|w| w.fullscreen && !w.minimized).unwrap_or(false))
+                    .copied()
+                    .collect();
+                for win_id in fullscreen_ids {
+                    if let Some(win) = self.windows.get(&win_id) {
+                        if let Some(node) = &win.node {
+                            node.set_position(0, 0);
+                        }
+                        win.proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
+                    }
+                    if let Some(deco) = self.decorations.get(&win_id) {
+                        decorations::detach_titlebar(deco);
+                    }
+                }
             }
             LayoutMode::Floating => {
                 // ── Floating render path ────────────────────────────────────
@@ -457,7 +479,7 @@ impl AppState {
                         }
                     }
 
-                    // Update and commit the CPU-rendered titlebar surface.
+                    // Update/commit titlebar, or detach it when fullscreen.
                     if !fullscreen {
                         if let Some(wl_shm) = self.globals.wl_shm.clone() {
                             if let Some(deco) = self.decorations.get_mut(&win_id) {
@@ -468,6 +490,8 @@ impl AppState {
                                 decorations::commit_in_render_sequence(deco);
                             }
                         }
+                    } else if let Some(deco) = self.decorations.get(&win_id) {
+                        decorations::detach_titlebar(deco);
                     }
                 }
             }
@@ -725,12 +749,14 @@ impl Dispatch<RiverWindowV1, ()> for AppState {
             }
             river_window_v1::Event::MaximizeRequested => {
                 if let Some(win) = state.windows.get_mut(&win_id) {
+                    win.maximized = true;
                     win.pending_maximized_inform = Some(true);
                 }
                 state.layout_dirty = true;
             }
             river_window_v1::Event::UnmaximizeRequested => {
                 if let Some(win) = state.windows.get_mut(&win_id) {
+                    win.maximized = false;
                     win.pending_maximized_inform = Some(false);
                 }
                 state.layout_dirty = true;
