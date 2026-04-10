@@ -277,6 +277,11 @@ impl AppState {
 
     fn apply_floating_layout_manage(&self) {
         let (ow, oh) = self.usable_output_size();
+        // Raw output dimensions — fullscreen windows must cover the full output,
+        // not just the panel-free usable area.
+        let (raw_ow, raw_oh) = self.outputs.values().next()
+            .map(|o| (o.width as i32, o.height as i32))
+            .unwrap_or((ow, oh));
 
         match self.layout_mode {
             LayoutMode::MasterStack | LayoutMode::Bsp => {
@@ -295,7 +300,7 @@ impl AppState {
                 let gi = self.config.appearance.gap_inner as i32;
                 let tiles = match self.layout_mode {
                     LayoutMode::MasterStack => compute_tiles(visible.len(), ow, oh, go, gi),
-                    _                       => compute_bsp(visible.len(), ow, oh, go, gi),
+                    _                       => compute_bsp(visible.len(), ow, oh, go, gi, self.config.layout.split_ratio),
                 };
 
                 for (win_id, tile) in visible.iter().zip(tiles.iter()) {
@@ -306,13 +311,13 @@ impl AppState {
                         win.proxy.use_ssd();
                     }
                 }
-                // Fullscreen windows: shown at full output size, positioned at origin.
+                // Fullscreen windows: propose full raw output size, not usable area.
                 // Minimized windows: hidden.
                 for win in self.windows.values() {
                     if win.minimized {
                         win.proxy.hide();
                     } else if win.fullscreen {
-                        win.proxy.propose_dimensions(ow, oh);
+                        win.proxy.propose_dimensions(raw_ow, raw_oh);
                         win.proxy.show();
                         win.proxy.use_ssd();
                     }
@@ -358,7 +363,7 @@ impl AppState {
                 let gi = self.config.appearance.gap_inner as i32;
                 let tiles = match self.layout_mode {
                     LayoutMode::MasterStack => compute_tiles(visible.len(), ow, oh, go, gi),
-                    _                       => compute_bsp(visible.len(), ow, oh, go, gi),
+                    _                       => compute_bsp(visible.len(), ow, oh, go, gi, self.config.layout.split_ratio),
                 };
 
                 // Snapshot to avoid borrow conflicts.
@@ -450,8 +455,14 @@ impl AppState {
 
                     // Position the window node, applying slide-in animation if active.
                     if let Some(win) = self.windows.get(&win_id) {
-                        let tx = if win_x == 0 { (ow - actual_w).max(0) / 2 } else { win_x };
-                        let ty = if win_y == 0 { (oh - actual_h).max(0) / 2 } else { win_y };
+                        // Fullscreen: always at (0,0) regardless of stored position.
+                        let (tx, ty) = if fullscreen {
+                            (0, 0)
+                        } else {
+                            let tx = if win_x == 0 { (ow - actual_w).max(0) / 2 } else { win_x };
+                            let ty = if win_y == 0 { (oh - actual_h).max(0) / 2 } else { win_y };
+                            (tx, ty)
+                        };
                         let (x, y) = if let Some(anim) = self.animations.get_mut(&win_id) {
                             anim.set_target(tx, ty);
                             let pos = anim.current_pos();
